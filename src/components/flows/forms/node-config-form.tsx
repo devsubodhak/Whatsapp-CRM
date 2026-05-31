@@ -913,8 +913,22 @@ function SendMediaForm({
         if (userErr || !user) {
           throw new Error("Not signed in.");
         }
-        // Path convention matches migration 016's RLS policy: first
-        // segment must equal auth.uid(). Timestamp + random suffix
+        // Resolve the caller's account_id so the path is account-
+        // scoped rather than user-scoped. The 020 migration's RLS
+        // policy allows any account member to write under
+        // `account-<account_id>/...`, so a flow's media survives a
+        // teammate leaving the account (which was a data-integrity
+        // hole in the original 016 storage policies).
+        const { data: profile, error: profileErr } = await supabase
+          .from("profiles")
+          .select("account_id")
+          .eq("user_id", user.id)
+          .maybeSingle();
+        if (profileErr || !profile?.account_id) {
+          throw new Error("Could not resolve your account.");
+        }
+        // Path convention matches migration 020's RLS policy: first
+        // segment is `account-<uuid>`. Timestamp + random suffix
         // prevents collisions between two builders open at once.
         const ext = file.name.split(".").pop()?.toLowerCase() ?? "bin";
         const safeBase =
@@ -922,7 +936,7 @@ function SendMediaForm({
             .replace(/\.[^.]+$/, "")
             .replace(/[^a-zA-Z0-9_-]+/g, "_")
             .slice(0, 40) || "file";
-        const path = `${user.id}/${Date.now()}-${safeBase}.${ext}`;
+        const path = `account-${profile.account_id}/${Date.now()}-${safeBase}.${ext}`;
         const { error: upErr } = await supabase.storage
           .from(FLOW_MEDIA_BUCKET)
           .upload(path, file, {

@@ -875,21 +875,42 @@ async function findOrCreateContact(
   phone: string,
   name: string
 ): Promise<ContactOutcome | null> {
-  // Look up existing contacts for this account. Switched from
-  // user_id to account_id in PR 8 of the multi-user series so an
-  // inbound message lands on the team's existing contact row even
-  // if a different teammate created it.
+  // Look up existing contacts for this account. We pre-filter in SQL
+  // by the phone's last-8-digit suffix so we don't ship every contact
+  // in the account over the wire just to JS-filter to one row. This
+  // matters at scale: a shared account with 5 teammates × 100 contacts
+  // each is 500 rows — the prior implementation pulled all of them on
+  // every inbound message.
+  //
+  // The `phonesMatch` helper considers two phones equal if they share
+  // the last 8 digits (trunk-prefix tolerance). We mirror that here as
+  // a `like` pattern, then re-run the strict comparison in JS on the
+  // narrowed candidate set. The candidate set is typically 0-2 rows,
+  // so the JS pass is effectively free.
+  //
+  // The trailing-suffix `like` cannot use a B-tree index, but the
+  // `account_id` filter on top of `idx_contacts_account` (017) means
+  // we sequential-scan a small, account-scoped subset.
+  const normalizedSender = phone.replace(/\D/g, '')
+  const phoneSuffix =
+    normalizedSender.length >= 8
+      ? normalizedSender.slice(-8)
+      : normalizedSender
+
   const { data: contacts, error: contactsError } = await supabaseAdmin()
     .from('contacts')
     .select('*')
     .eq('account_id', accountId)
+    .like('phone', `%${phoneSuffix}`)
 
   if (contactsError) {
     console.error('Error fetching contacts:', contactsError)
     return null
   }
 
-  // Use phonesMatch for flexible matching
+  // Re-apply phonesMatch on the candidate set for correctness — the
+  // SQL `like` is a coarse pre-filter; phonesMatch handles edge cases
+  // like leading-`+` and explicit trunk-zero handling.
   const existingContact = contacts?.find((c: ContactRow) => phonesMatch(c.phone, phone))
 
   if (existingContact) {

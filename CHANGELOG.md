@@ -40,6 +40,28 @@ as the sole owner of their own account and sees identical data.
 
 ### Changed
 
+- **Flow-media storage is now account-scoped.** Migration 016
+  pathed uploaded files under `auth.uid()/...`, which orphaned
+  flow media when a teammate left a shared account. New uploads
+  go under `account-<account_id>/...` and any account member
+  with the right role can edit them. Legacy paths remain
+  writable by the original uploader for backward compatibility.
+- **Webhook contact lookup now pre-filters in SQL.** Previously
+  pulled every contact in an account just to JS-filter to one
+  row by phone — fine when account = one user, painful when
+  account = team. Pre-filter by phone suffix on the database
+  side; re-apply `phonesMatch` on the (typically 0-2 row)
+  candidate set.
+
+### Migration required
+
+- `supabase/migrations/020_account_sharing_followups.sql` —
+  composite partial indexes on `automations(account_id,
+  trigger_type) WHERE is_active` and `flows(account_id) WHERE
+  status='active'` for the engine dispatch hot path; updated
+  `flow-media` storage RLS to allow account-member writes under
+  the new path convention. Idempotent.
+
 - **Role-aware UI gating across the app.** The inbox composer's
   send button + textarea, the "New broadcast / automation / flow"
   buttons, the "Add pipeline / deal" buttons, and the "Add /
