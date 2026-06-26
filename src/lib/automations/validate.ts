@@ -132,6 +132,14 @@ function validateOne(step: StepLike, path: string, issues: ValidationIssue[]): v
         issues.push({ path: `${path}.url`, message: 'webhook URL is not a valid URL' })
       }
       break
+    case 'ai_reply':
+      if (!nonEmpty(c.knowledge_base_id)) {
+        issues.push({
+          path: `${path}.knowledge_base_id`,
+          message: 'a knowledge base is required',
+        })
+      }
+      break
     case 'close_conversation':
       // No config required.
       break

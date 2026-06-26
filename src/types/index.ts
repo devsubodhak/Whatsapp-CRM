@@ -388,6 +388,7 @@ export type AutomationStepType =
   | 'wait'
   | 'condition'
   | 'send_webhook'
+  | 'ai_reply'
   | 'close_conversation';
 
 export type AutomationLogStatus = 'success' | 'partial' | 'failed';
@@ -479,6 +480,22 @@ export interface SendWebhookStepConfig {
   body_template?: string;
 }
 
+export interface AIReplyStepConfig {
+  /** Knowledge base whose `content` is given to the model as context. */
+  knowledge_base_id?: string;
+  /**
+   * Persona / tone instructions prepended to the system prompt, e.g.
+   * "You are the sales assistant for Acme. Be concise and friendly."
+   */
+  system_prompt?: string;
+  /** Gemini model id. Defaults to gemini-2.5-flash at runtime. */
+  model?: string;
+  /** Sent verbatim if the model call fails, so the customer isn't left in silence. */
+  fallback_text?: string;
+  /** When true, the last ~10 conversation messages are passed for context. */
+  include_history?: boolean;
+}
+
 export type AutomationStepConfig =
   | SendMessageStepConfig
   | SendTemplateStepConfig
@@ -489,8 +506,22 @@ export type AutomationStepConfig =
   | WaitStepConfig
   | ConditionStepConfig
   | SendWebhookStepConfig
+  | AIReplyStepConfig
   | Record<string, never>
   | Record<string, unknown>;
+
+export interface KnowledgeBase {
+  id: string;
+  /** Account tenancy key (migration 027). */
+  account_id: string;
+  /** Author, for audit only — never used for tenancy. */
+  user_id?: string | null;
+  name: string;
+  /** Plain text / markdown handed to the AI model as context. */
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface Automation {
   id: string;

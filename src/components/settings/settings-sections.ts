@@ -1,4 +1,5 @@
 import {
+  BookOpen,
   Coins,
   FileText,
   KeyRound,
@@ -29,6 +30,7 @@ export const SETTINGS_SECTIONS = [
   'templates',
   'fields',
   'deals',
+  'knowledge',
   'members',
   'api',
 ] as const;
@@ -54,6 +56,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   templates: { id: 'templates', label: 'Templates', icon: FileText, group: 'workspace' },
   fields: { id: 'fields', label: 'Fields & tags', icon: Tags, group: 'workspace' },
   deals: { id: 'deals', label: 'Deals & currency', icon: Coins, group: 'workspace' },
+  knowledge: { id: 'knowledge', label: 'Knowledge bases', icon: BookOpen, group: 'workspace' },
   members: { id: 'members', label: 'Team members', icon: UsersRound, group: 'workspace' },
   api: { id: 'api', label: 'API keys', icon: KeyRound, group: 'workspace' },
 };

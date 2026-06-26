@@ -13,9 +13,11 @@ import type {
   WaitStepConfig,
   CreateDealStepConfig,
   AssignConversationStepConfig,
+  AIReplyStepConfig,
 } from '@/types'
 import { supabaseAdmin } from './admin-client'
 import { engineSendText, engineSendTemplate } from './meta-send'
+import { generateReply, type HistoryTurn } from '@/lib/ai/gemini'
 
 // ------------------------------------------------------------
 // Public API
@@ -535,6 +537,86 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       })
       if (!res.ok) throw new Error(`webhook returned ${res.status}`)
       return `webhook ${res.status}`
+    }
+
+    case 'ai_reply': {
+      const cfg = step.step_config as AIReplyStepConfig
+      if (!args.contactId) throw new Error('ai_reply needs a contact')
+      const inbound = (args.context.message_text ?? '').toString()
+      if (!inbound.trim()) throw new Error('ai_reply has no inbound message to reply to')
+      const conversationId = await resolveConversationId(args)
+
+      // Load the knowledge base content, scoped to the account. The
+      // service-role client bypasses RLS, so the account filter is what
+      // stops a config that references another tenant's KB id from
+      // leaking its content into this account's replies.
+      let knowledge = ''
+      if (cfg.knowledge_base_id) {
+        const { data: kb } = await db
+          .from('knowledge_bases')
+          .select('content')
+          .eq('id', cfg.knowledge_base_id)
+          .eq('account_id', args.automation.account_id)
+          .maybeSingle()
+        knowledge = (kb?.content as string | undefined) ?? ''
+      }
+
+      // Recent conversation context (oldest-first), excluding the
+      // current inbound — it's passed separately as the message to
+      // answer. Reversed because we fetch newest-first to use the index.
+      let history: HistoryTurn[] | undefined
+      if (cfg.include_history) {
+        const { data: rows } = await db
+          .from('messages')
+          .select('sender_type, content_text, created_at')
+          .eq('conversation_id', conversationId)
+          .eq('content_type', 'text')
+          .order('created_at', { ascending: false })
+          .limit(11)
+        history = (rows ?? [])
+          .reverse()
+          .slice(0, -1) // drop the latest (the inbound we're replying to)
+          .filter((r) => (r.content_text ?? '').trim())
+          .map((r) => ({
+            role: r.sender_type as HistoryTurn['role'],
+            text: r.content_text as string,
+          }))
+      }
+
+      let reply: string
+      try {
+        reply = await generateReply({
+          message: inbound,
+          knowledge,
+          systemPrompt: cfg.system_prompt,
+          history,
+          model: cfg.model,
+        })
+      } catch (err) {
+        // Never leave the customer in silence: fall back to the
+        // configured text if the model call fails. With no fallback,
+        // surface the error so the log records why nothing was sent.
+        const msg = err instanceof Error ? err.message : String(err)
+        const fallback = cfg.fallback_text?.trim()
+        if (!fallback) throw new Error(`ai_reply failed: ${msg}`)
+        await engineSendText({
+          accountId: args.automation.account_id,
+          userId: args.automation.user_id,
+          conversationId,
+          contactId: args.contactId,
+          text: fallback,
+        })
+        return `model failed (${msg}); sent fallback`
+      }
+
+      const { whatsapp_message_id } = await engineSendText({
+        accountId: args.automation.account_id,
+        userId: args.automation.user_id,
+        conversationId,
+        contactId: args.contactId,
+        text: reply,
+      })
+      return `AI reply sent via Meta (${whatsapp_message_id})`
     }
 
     case 'close_conversation': {

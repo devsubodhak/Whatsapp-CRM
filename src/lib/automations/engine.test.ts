@@ -95,7 +95,13 @@ vi.mock("./meta-send", () => ({
   engineSendTemplate: vi.fn(async () => ({ whatsapp_message_id: "m1" })),
 }));
 
+vi.mock("@/lib/ai/gemini", () => ({
+  generateReply: vi.fn(async () => "AI drafted reply"),
+}));
+
 import { runAutomationsForTrigger } from "./engine";
+import { engineSendText } from "./meta-send";
+import { generateReply } from "@/lib/ai/gemini";
 
 const ACCOUNT = "acct-1";
 
@@ -107,6 +113,8 @@ beforeEach(() => {
   h.state.fromCalls = [];
   h.state.updateCalls = [];
   h.state.upsertCalls = [];
+  // Clear call history but keep the factory implementations.
+  vi.clearAllMocks();
 });
 
 describe("runAutomationsForTrigger — tenant isolation", () => {
@@ -256,3 +264,78 @@ function customStep(field: string, value: string) {
     step_config: { field, value },
   };
 }
+
+function aiReplyStep(config: Record<string, unknown>) {
+  return {
+    id: "s1",
+    automation_id: "a1",
+    step_type: "ai_reply",
+    position: 0,
+    parent_step_id: null,
+    step_config: config,
+  };
+}
+
+describe("ai_reply step", () => {
+  it("sends the model's drafted reply via Meta", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [aiReplyStep({ include_history: false })];
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      // conversation_id in context avoids the conversation lookup.
+      context: { message_text: "mokakda price eka?", conversation_id: "conv1" },
+    });
+
+    expect(vi.mocked(generateReply)).toHaveBeenCalledOnce();
+    expect(vi.mocked(generateReply).mock.calls[0][0]).toMatchObject({
+      message: "mokakda price eka?",
+    });
+    expect(vi.mocked(engineSendText)).toHaveBeenCalledOnce();
+    expect(vi.mocked(engineSendText).mock.calls[0][0]).toMatchObject({
+      conversationId: "conv1",
+      contactId: "c1",
+      text: "AI drafted reply",
+    });
+  });
+
+  it("falls back to the configured text when the model call fails", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [
+      aiReplyStep({ include_history: false, fallback_text: "We'll reply shortly." }),
+    ];
+    vi.mocked(generateReply).mockRejectedValueOnce(new Error("Gemini 503"));
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: { message_text: "hi", conversation_id: "conv1" },
+    });
+
+    expect(vi.mocked(engineSendText)).toHaveBeenCalledOnce();
+    expect(vi.mocked(engineSendText).mock.calls[0][0]).toMatchObject({
+      text: "We'll reply shortly.",
+    });
+  });
+
+  it("does not send when the model fails and no fallback is set", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [aiReplyStep({ include_history: false })];
+    vi.mocked(generateReply).mockRejectedValueOnce(new Error("Gemini 503"));
+
+    await runAutomationsForTrigger({
+      accountId: ACCOUNT,
+      triggerType: "new_message_received",
+      contactId: "c1",
+      context: { message_text: "hi", conversation_id: "conv1" },
+    });
+
+    expect(vi.mocked(engineSendText)).not.toHaveBeenCalled();
+  });
+});

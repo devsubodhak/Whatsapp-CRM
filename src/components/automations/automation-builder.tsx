@@ -26,6 +26,7 @@ import {
   GitBranch,
   Webhook,
   CircleSlash,
+  Sparkles,
   Zap,
   Loader2,
   ArrowDown,
@@ -98,6 +99,7 @@ const STEP_META: Record<AutomationStepType, StepMeta> = {
   wait: { label: "Wait", icon: Hourglass, border: "border-l-border" },
   condition: { label: "Condition (If/Else)", icon: GitBranch, border: "border-l-amber-500" },
   send_webhook: { label: "Send Webhook", icon: Webhook, border: "border-l-primary" },
+  ai_reply: { label: "AI Reply", icon: Sparkles, border: "border-l-violet-500" },
   close_conversation: { label: "Close Conversation", icon: CircleSlash, border: "border-l-primary" },
 }
 
@@ -112,6 +114,7 @@ const ADDABLE_STEPS: AutomationStepType[] = [
   "wait",
   "condition",
   "send_webhook",
+  "ai_reply",
   "close_conversation",
 ]
 
@@ -159,6 +162,14 @@ function blankConfig(type: AutomationStepType): Record<string, unknown> {
       return { subject: "tag_presence", operand: "", value: "" }
     case "send_webhook":
       return { url: "", headers: {}, body_template: "" }
+    case "ai_reply":
+      return {
+        knowledge_base_id: "",
+        system_prompt: "",
+        model: "gemini-2.5-flash",
+        fallback_text: "",
+        include_history: true,
+      }
     case "close_conversation":
       return {}
     default:
@@ -176,11 +187,17 @@ function blankConfig(type: AutomationStepType): Record<string, unknown> {
 // an older deployment), so an automation is always authorable.
 // ------------------------------------------------------------
 
+interface KnowledgeBaseOption {
+  id: string
+  name: string
+}
+
 interface AutomationResources {
   tags: TagRecord[]
   members: AccountMember[]
   templates: MessageTemplate[]
   customFields: CustomField[]
+  knowledgeBases: KnowledgeBaseOption[]
 }
 
 const ResourcesContext = createContext<AutomationResources>({
@@ -188,6 +205,7 @@ const ResourcesContext = createContext<AutomationResources>({
   members: [],
   templates: [],
   customFields: [],
+  knowledgeBases: [],
 })
 
 function useResources(): AutomationResources {
@@ -199,17 +217,18 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
   const [members, setMembers] = useState<AccountMember[]>([])
   const [templates, setTemplates] = useState<MessageTemplate[]>([])
   const [customFields, setCustomFields] = useState<CustomField[]>([])
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseOption[]>([])
 
   useEffect(() => {
     let cancelled = false
     const supabase = createClient()
 
-    // Tags, templates and custom fields come straight from the DB — RLS
-    // scopes them to the caller's account. Only APPROVED templates can
-    // actually be sent (anything else 400s at send time), matching the
-    // broadcast picker.
+    // Tags, templates, custom fields and knowledge bases come straight
+    // from the DB — RLS scopes them to the caller's account. Only
+    // APPROVED templates can actually be sent (anything else 400s at
+    // send time), matching the broadcast picker.
     void (async () => {
-      const [tagsRes, templatesRes, customFieldsRes] = await Promise.all([
+      const [tagsRes, templatesRes, customFieldsRes, kbRes] = await Promise.all([
         supabase.from("tags").select("*").order("name"),
         supabase
           .from("message_templates")
@@ -217,11 +236,13 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
           .eq("status", "APPROVED")
           .order("name"),
         supabase.from("custom_fields").select("*").order("field_name"),
+        supabase.from("knowledge_bases").select("id, name").order("name"),
       ])
       if (cancelled) return
       setTags((tagsRes.data as TagRecord[] | null) ?? [])
       setTemplates((templatesRes.data as MessageTemplate[] | null) ?? [])
       setCustomFields((customFieldsRes.data as CustomField[] | null) ?? [])
+      setKnowledgeBases((kbRes.data as KnowledgeBaseOption[] | null) ?? [])
     })()
 
     // Members go through the API so we inherit its email-visibility
@@ -244,7 +265,9 @@ function ResourcesProvider({ children }: { children: ReactNode }) {
   }, [])
 
   return (
-    <ResourcesContext.Provider value={{ tags, members, templates, customFields }}>
+    <ResourcesContext.Provider
+      value={{ tags, members, templates, customFields, knowledgeBases }}
+    >
       {children}
     </ResourcesContext.Provider>
   )
@@ -1242,6 +1265,8 @@ function StepEditor({
           </FieldBlock>
         </>
       )
+    case "ai_reply":
+      return <AIReplyFields cfg={cfg} set={set} />
     case "close_conversation":
       return (
         <p className="text-xs text-muted-foreground">
@@ -1251,6 +1276,105 @@ function StepEditor({
     default:
       return null
   }
+}
+
+const AI_REPLY_MODELS: { value: string; label: string }[] = [
+  { value: "gemini-2.5-flash", label: "Gemini 2.5 Flash (fast, cheap)" },
+  { value: "gemini-2.5-pro", label: "Gemini 2.5 Pro (smarter, slower)" },
+  { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
+]
+
+/** Editor for the AI Reply step: pick a knowledge base, set the
+ *  persona/system prompt, model, history toggle, and a fallback message
+ *  sent if the model call fails. */
+function AIReplyFields({
+  cfg,
+  set,
+}: {
+  cfg: Record<string, unknown>
+  set: (patch: Record<string, unknown>) => void
+}) {
+  const { knowledgeBases } = useResources()
+  const selectedKb = (cfg.knowledge_base_id as string) ?? ""
+  const known = knowledgeBases.some((k) => k.id === selectedKb)
+
+  return (
+    <>
+      <FieldBlock label="Knowledge base">
+        {knowledgeBases.length === 0 ? (
+          <p className="text-xs text-muted-foreground">
+            No knowledge bases yet. Create one under{" "}
+            <span className="text-foreground">Settings → Knowledge bases</span>,
+            then come back to pick it here.
+          </p>
+        ) : (
+          <select
+            value={selectedKb}
+            onChange={(e) => set({ knowledge_base_id: e.target.value })}
+            className={SELECT_CLASS}
+          >
+            <option value="">Select a knowledge base…</option>
+            {knowledgeBases.map((k) => (
+              <option key={k.id} value={k.id}>
+                {k.name}
+              </option>
+            ))}
+            {/* Preserve a saved KB that's since been deleted so editing
+                doesn't silently drop it. */}
+            {selectedKb && !known && (
+              <option value={selectedKb}>{selectedKb} (unknown)</option>
+            )}
+          </select>
+        )}
+      </FieldBlock>
+
+      <FieldBlock label="Persona / instructions (optional)">
+        <Textarea
+          value={(cfg.system_prompt as string) ?? ""}
+          onChange={(e) => set({ system_prompt: e.target.value })}
+          placeholder="e.g. You are the friendly sales assistant for Acme. Keep replies short."
+          className="min-h-20 bg-muted text-foreground"
+        />
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          The AI auto-detects English, Sinhala, and Singlish and replies in the
+          same language — you don&apos;t need to tell it to.
+        </p>
+      </FieldBlock>
+
+      <FieldBlock label="Model">
+        <select
+          value={(cfg.model as string) ?? "gemini-2.5-flash"}
+          onChange={(e) => set({ model: e.target.value })}
+          className={SELECT_CLASS}
+        >
+          {AI_REPLY_MODELS.map((m) => (
+            <option key={m.value} value={m.value}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </FieldBlock>
+
+      <FieldBlock label="Fallback message (optional)">
+        <Input
+          value={(cfg.fallback_text as string) ?? ""}
+          onChange={(e) => set({ fallback_text: e.target.value })}
+          placeholder="Sent if the AI is unavailable, e.g. 'Thanks! A team member will reply shortly.'"
+          className="bg-muted text-foreground"
+        />
+      </FieldBlock>
+
+      <label className="flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+        <input
+          type="checkbox"
+          checked={(cfg.include_history as boolean) ?? true}
+          onChange={(e) => set({ include_history: e.target.checked })}
+          className="size-3.5 accent-violet-500"
+        />
+        Include recent conversation history for context
+      </label>
+    </>
+  )
 }
 
 function FieldBlock({
@@ -1280,6 +1404,8 @@ function previewFor(step: BuilderStep): string {
       return `when ${step.step_config.subject ?? "?"}`
     case "send_webhook":
       return (step.step_config.url as string) || "no url"
+    case "ai_reply":
+      return (step.step_config.model as string) || "AI reply"
     default:
       return ""
   }
