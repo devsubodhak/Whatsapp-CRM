@@ -19,7 +19,17 @@ import { supabaseAdmin } from './admin-client'
 // converge in a later refactor.
 // ------------------------------------------------------------
 
-interface SendTextArgs {
+/** How the persisted message is attributed. Automations/flows send as
+ *  'bot'; scheduled 1:1 messages an agent composed send as 'agent' so
+ *  the inbox bubble renders them as a teammate's message, not the bot. */
+interface SenderAttribution {
+  /** Defaults to 'bot' when omitted (automation/flow sends). */
+  senderType?: 'bot' | 'agent'
+  /** messages.sender_id — set for 'agent' sends to the scheduling user. */
+  senderId?: string | null
+}
+
+interface SendTextArgs extends SenderAttribution {
   /** Account-level tenancy key. Drives contact + whatsapp_config
    *  lookups so an automation authored by user A still sends through
    *  the WhatsApp number user B saved on the same account. */
@@ -33,7 +43,7 @@ interface SendTextArgs {
   text: string
 }
 
-interface SendTemplateArgs {
+interface SendTemplateArgs extends SenderAttribution {
   accountId: string
   userId: string
   conversationId: string
@@ -149,7 +159,10 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
 
   const { error: msgErr } = await db.from('messages').insert({
     conversation_id: input.conversationId,
-    sender_type: 'bot',
+    // Defaults to 'bot' for automation/flow sends; scheduled 1:1 sends
+    // pass 'agent' + the scheduling user's id.
+    sender_type: input.senderType ?? 'bot',
+    sender_id: input.senderType === 'agent' ? (input.senderId ?? null) : null,
     content_type,
     content_text,
     template_name,

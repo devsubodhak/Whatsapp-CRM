@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { MAX_KB_CONTENT_CHARS } from '../route'
 
 // Update / delete a single knowledge base. Both run through the
 // caller's RLS-scoped client: the knowledge_bases_update /
@@ -27,7 +28,15 @@ export async function PATCH(
     if (!name) return NextResponse.json({ error: 'name cannot be empty' }, { status: 400 })
     update.name = name
   }
-  if (typeof body.content === 'string') update.content = body.content
+  if (typeof body.content === 'string') {
+    if (body.content.length > MAX_KB_CONTENT_CHARS) {
+      return NextResponse.json(
+        { error: `content exceeds ${MAX_KB_CONTENT_CHARS.toLocaleString()} characters` },
+        { status: 400 },
+      )
+    }
+    update.content = body.content
+  }
 
   const { data, error } = await supabase
     .from('knowledge_bases')

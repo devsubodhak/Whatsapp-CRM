@@ -17,6 +17,7 @@ import {
   Mic,
   Square,
   X,
+  Clock,
   Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,8 @@ import {
   MEDIA_MAX_BYTES_BY_KIND,
 } from "@/lib/storage/upload-media";
 import { ReplyQuote } from "./reply-quote";
+import { ScheduleMessageDialog } from "./schedule-message-dialog";
+import { ScheduledMessagesBar } from "./scheduled-messages-bar";
 
 /** Media content types an agent can send from the composer. */
 export type ComposerMediaKind = "image" | "video" | "document" | "audio";
@@ -123,6 +126,11 @@ export function MessageComposer({
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Scheduling: dialog visibility + a counter bumped after each schedule
+  // so the ScheduledMessagesBar refetches.
+  const [scheduleOpen, setScheduleOpen] = useState(false);
+  const [scheduleRefresh, setScheduleRefresh] = useState(0);
 
   // Media attachment state. `draft` holds an uploaded-but-not-yet-sent
   // attachment; `busy` covers the upload/transcode window.
@@ -379,6 +387,10 @@ export function MessageComposer({
 
   return (
     <div className="border-t border-border bg-card p-3">
+      <ScheduledMessagesBar
+        conversationId={conversationId}
+        refreshKey={scheduleRefresh}
+      />
       {replyTo && (
         <div className="mb-2">
           <ReplyQuote
@@ -548,6 +560,19 @@ export function MessageComposer({
           />
 
           <GatedButton
+            variant="ghost"
+            size="sm"
+            canAct={!readOnly}
+            gateReason="send messages"
+            disabled={!text.trim()}
+            title={readOnly ? undefined : "Schedule for later"}
+            onClick={() => setScheduleOpen(true)}
+            className="h-9 w-9 shrink-0 p-0 text-muted-foreground hover:text-foreground disabled:opacity-40"
+          >
+            <Clock className="h-4 w-4" />
+          </GatedButton>
+
+          <GatedButton
             size="sm"
             canAct={!readOnly}
             gateReason="send messages"
@@ -559,6 +584,18 @@ export function MessageComposer({
           </GatedButton>
         </div>
       )}
+
+      <ScheduleMessageDialog
+        conversationId={conversationId}
+        open={scheduleOpen}
+        onOpenChange={setScheduleOpen}
+        initialText={text}
+        onScheduled={() => {
+          setScheduleRefresh((n) => n + 1);
+          setText("");
+          if (textareaRef.current) textareaRef.current.style.height = "auto";
+        }}
+      />
 
       {/* Hint sits outside the flex row so its height doesn't push
           `items-end` buttons below the textarea. Indented to line up

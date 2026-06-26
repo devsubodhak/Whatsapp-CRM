@@ -6,6 +6,12 @@ import { createClient } from '@/lib/supabase/server'
 // caller's RLS-scoped client, so the account_id filter and admin-only
 // write policies are enforced by the database, not re-implemented here.
 
+// Cap the content size. The whole knowledge base is sent to the model
+// as input tokens on EVERY inbound message, so an unbounded blob is a
+// cost-amplification + latency footgun. ~200k chars is generous for a
+// price list / FAQ while staying well inside the model context window.
+export const MAX_KB_CONTENT_CHARS = 200_000
+
 export async function GET() {
   const supabase = await createClient()
   const {
@@ -47,6 +53,12 @@ export async function POST(request: Request) {
   const name = typeof body.name === 'string' ? body.name.trim() : ''
   const content = typeof body.content === 'string' ? body.content : ''
   if (!name) return NextResponse.json({ error: 'name is required' }, { status: 400 })
+  if (content.length > MAX_KB_CONTENT_CHARS) {
+    return NextResponse.json(
+      { error: `content exceeds ${MAX_KB_CONTENT_CHARS.toLocaleString()} characters` },
+      { status: 400 },
+    )
+  }
 
   // INSERT is gated to admins by the knowledge_bases_insert RLS policy;
   // a non-admin caller gets a policy violation surfaced as the error.

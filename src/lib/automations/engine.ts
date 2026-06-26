@@ -18,6 +18,7 @@ import type {
 import { supabaseAdmin } from './admin-client'
 import { engineSendText, engineSendTemplate } from './meta-send'
 import { generateReply, type HistoryTurn } from '@/lib/ai/gemini'
+import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 
 // ------------------------------------------------------------
 // Public API
@@ -544,6 +545,20 @@ async function runStep(step: AutomationStep, args: ExecuteArgs): Promise<string>
       if (!args.contactId) throw new Error('ai_reply needs a contact')
       const inbound = (args.context.message_text ?? '').toString()
       if (!inbound.trim()) throw new Error('ai_reply has no inbound message to reply to')
+
+      // Per-contact throttle. Each AI reply sends the whole knowledge
+      // base to the model as input tokens, so a customer spamming
+      // messages could run up the LLM bill. Over the limit we skip the
+      // model call entirely (no reply, no fallback) rather than throwing,
+      // so the rest of the automation still runs and the log stays clean.
+      const rl = checkRateLimit(
+        `ai_reply:${args.automation.account_id}:${args.contactId}`,
+        RATE_LIMITS.aiReply,
+      )
+      if (!rl.success) {
+        return 'rate limited; AI reply skipped'
+      }
+
       const conversationId = await resolveConversationId(args)
 
       // Load the knowledge base content, scoped to the account. The

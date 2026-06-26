@@ -141,6 +141,13 @@ export const RATE_LIMITS = {
    *  while still bounding accidental abuse from a script run in a
    *  loop or a compromised admin session spamming role flips. */
   adminAction: { limit: 30, windowMs: 60_000 },
+  /** AI auto-reply, keyed per contact. Each call sends the whole
+   *  knowledge base to the model as input tokens, so an unthrottled
+   *  chatty (or malicious) customer can run up the LLM bill. 8/min per
+   *  contact is well above a normal back-and-forth while bounding a
+   *  spam burst. Per-process like every bucket here — a multi-instance
+   *  deploy needs the Redis swap noted at the top of the file. */
+  aiReply: { limit: 8, windowMs: 60_000 },
   /** Public REST API (`/api/v1/*`), keyed per API key. 120/min ≈ 2
    *  req/s sustained — comfortable for a polling integration or an
    *  automation firing on inbound events, while bounding a runaway

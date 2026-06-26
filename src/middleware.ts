@@ -77,9 +77,15 @@ export async function middleware(request: NextRequest) {
     return withRefreshedCookies(NextResponse.redirect(url))
   }
 
-  // API routes that need auth (not webhooks)
+  // API routes that need auth. Two carve-outs use their own auth and
+  // are hit by external callers with no Supabase session, so the
+  // cookie-auth gate must not block them:
+  //   - /webhook       — Meta inbound, verified by HMAC signature
+  //   - /schedule/cron — scheduled-message drain, verified by the
+  //                      x-cron-secret shared secret
   if (!user && request.nextUrl.pathname.startsWith('/api/whatsapp/') &&
-      !request.nextUrl.pathname.includes('/webhook')) {
+      !request.nextUrl.pathname.includes('/webhook') &&
+      !request.nextUrl.pathname.includes('/schedule/cron')) {
     return withRefreshedCookies(
       NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     )

@@ -102,6 +102,7 @@ vi.mock("@/lib/ai/gemini", () => ({
 import { runAutomationsForTrigger } from "./engine";
 import { engineSendText } from "./meta-send";
 import { generateReply } from "@/lib/ai/gemini";
+import { __resetRateLimitForTests, RATE_LIMITS } from "@/lib/rate-limit";
 
 const ACCOUNT = "acct-1";
 
@@ -115,6 +116,9 @@ beforeEach(() => {
   h.state.upsertCalls = [];
   // Clear call history but keep the factory implementations.
   vi.clearAllMocks();
+  // Reset the in-memory AI rate-limit buckets so per-contact counts
+  // don't leak across tests.
+  __resetRateLimitForTests();
 });
 
 describe("runAutomationsForTrigger — tenant isolation", () => {
@@ -337,5 +341,27 @@ describe("ai_reply step", () => {
     });
 
     expect(vi.mocked(engineSendText)).not.toHaveBeenCalled();
+  });
+
+  it("throttles a spamming contact: stops calling the model past the limit", async () => {
+    h.state.owned = { id: "c1" };
+    h.state.automations = [automationWithUpdateStep()];
+    h.state.steps = [aiReplyStep({ include_history: false })];
+
+    const limit = RATE_LIMITS.aiReply.limit;
+    // Fire one more message than the per-contact budget allows.
+    for (let i = 0; i < limit + 3; i++) {
+      await runAutomationsForTrigger({
+        accountId: ACCOUNT,
+        triggerType: "new_message_received",
+        contactId: "c1",
+        context: { message_text: `spam ${i}`, conversation_id: "conv1" },
+      });
+    }
+
+    // The model (and the send) run at most `limit` times; the extra
+    // messages are skipped before the Gemini call.
+    expect(vi.mocked(generateReply).mock.calls.length).toBe(limit);
+    expect(vi.mocked(engineSendText).mock.calls.length).toBe(limit);
   });
 });

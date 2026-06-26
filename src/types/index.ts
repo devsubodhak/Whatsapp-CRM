@@ -510,6 +510,34 @@ export type AutomationStepConfig =
   | Record<string, never>
   | Record<string, unknown>;
 
+export type ScheduledMessageStatus =
+  | 'scheduled'
+  | 'sending'
+  | 'sent'
+  | 'failed';
+
+export interface ScheduledMessage {
+  id: string;
+  /** Account tenancy key (migration 028). */
+  account_id: string;
+  /** Who scheduled it — sender-of-record + audit. */
+  user_id?: string | null;
+  conversation_id: string;
+  contact_id: string;
+  message_type: 'text' | 'template';
+  content_text?: string | null;
+  template_name?: string | null;
+  template_language?: string | null;
+  /** Positional template params, in order. */
+  template_variables?: Record<string, string> | null;
+  scheduled_at: string;
+  status: ScheduledMessageStatus;
+  error_message?: string | null;
+  sent_message_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface KnowledgeBase {
   id: string;
   /** Account tenancy key (migration 027). */
