@@ -7,6 +7,7 @@ import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
 import { runAutomationsForTrigger } from '@/lib/automations/engine'
 import { dispatchInboundToFlows } from '@/lib/flows/engine'
+import { runCheckoutGateway } from '@/lib/checkout/engine'
 import {
   handleTemplateWebhookChange,
   isTemplateWebhookField,
@@ -182,15 +183,44 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
+  // Public origin for building payment links (AI Checkout). Prefer the
+  // configured canonical URL; otherwise derive it from the forwarded
+  // headers Meta's request carried through the proxy / tunnel.
+  const baseUrl = deriveBaseUrl(request)
+
   // Process asynchronously so we can ack Meta within their timeout.
-  processWebhook(body).catch((error) => {
+  processWebhook(body, baseUrl).catch((error) => {
     console.error('Error processing webhook:', error)
   })
 
   return NextResponse.json({ status: 'received' }, { status: 200 })
 }
 
-async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
+/** Origin (scheme + host) this deployment is reachable at, for absolute
+ *  links sent to customers (the PayHere "Pay Now" URL).
+ *
+ *  We PREFER the host the inbound webhook actually arrived on — Meta
+ *  posts to the public URL (ngrok / your domain), so the forwarded host
+ *  is always the real, currently-live public origin. This makes the
+ *  payment link survive an ngrok URL change with no env edits. Only when
+ *  the request host looks local (direct curl / tests) do we fall back to
+ *  the configured NEXT_PUBLIC_SITE_URL. */
+function deriveBaseUrl(request: Request): string {
+  const proto = request.headers.get('x-forwarded-proto') ?? 'https'
+  const host =
+    request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? ''
+  const isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/.test(host)
+  if (host && !isLocal) return `${proto}://${host}`
+
+  const configured = process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, '')
+  if (configured) return configured
+  return host ? `${proto}://${host}` : ''
+}
+
+async function processWebhook(
+  body: { entry?: WhatsAppWebhookEntry[] },
+  baseUrl: string,
+) {
   if (!body.entry) return
 
   for (const entry of body.entry) {
@@ -275,7 +305,12 @@ async function processWebhook(body: { entry?: WhatsAppWebhookEntry[] }) {
           // inserts that need it for NOT NULL FK compliance. Always
           // the admin who saved the WhatsApp config.
           config.user_id,
-          decryptedAccessToken
+          decryptedAccessToken,
+          {
+            phoneNumberId,
+            aiCheckoutEnabled: Boolean(config.ai_checkout_enabled),
+            baseUrl,
+          }
         )
       }
     }
@@ -509,7 +544,11 @@ async function processMessage(
   // (contacts, conversations). Always the admin who saved the
   // WhatsApp config; the choice is arbitrary post-017 but stable.
   configOwnerUserId: string,
-  accessToken: string
+  accessToken: string,
+  // AI Checkout context — the phone number id to send through, whether
+  // the feature is enabled for this account, and the public base URL
+  // for building the payment link.
+  checkout: { phoneNumberId: string; aiCheckoutEnabled: boolean; baseUrl: string }
 ) {
   const senderPhone = normalizePhone(message.from)
   const contactName = contact.profile.name
@@ -677,6 +716,38 @@ async function processMessage(
   })
   const flowConsumed = flowResult.consumed
 
+  // ============================================================
+  // AI Checkout gateway.
+  //
+  // Precedence: Flows → AI Checkout → Automations. Runs only when the
+  // account enabled it, a Flow didn't already consume the message, and
+  // this is a plain text message (button taps belong to Flows). When the
+  // gateway handles the message it sets `checkoutConsumed`, which — like
+  // flowConsumed — suppresses the content-level automation triggers so
+  // the AI Reply automation doesn't also respond.
+  // ============================================================
+  const inboundForCheckout = contentText ?? message.text?.body ?? ''
+  let checkoutConsumed = false
+  if (
+    checkout.aiCheckoutEnabled &&
+    !flowConsumed &&
+    !interactiveReplyId &&
+    inboundForCheckout.trim()
+  ) {
+    const checkoutResult = await runCheckoutGateway({
+      accountId,
+      userId: configOwnerUserId,
+      conversationId: conversation.id,
+      contactId: contactRecord.id,
+      phone: senderPhone,
+      messageText: inboundForCheckout,
+      phoneNumberId: checkout.phoneNumberId,
+      accessToken,
+      baseUrl: checkout.baseUrl,
+    })
+    checkoutConsumed = checkoutResult.consumed
+  }
+
   // Fire any automations that react to this webhook event. All dispatches
   // run here (not earlier) so the contact, conversation, and inbound
   // message all exist before any step — including send_message — runs.
@@ -689,9 +760,9 @@ async function processMessage(
     | 'new_message_received'
     | 'keyword_match'
   )[] = []
-  // Content-level triggers are suppressed when a flow consumed the
-  // message — see the comment block above.
-  if (!flowConsumed) {
+  // Content-level triggers are suppressed when a flow OR the AI checkout
+  // gateway consumed the message — see the comment blocks above.
+  if (!flowConsumed && !checkoutConsumed) {
     automationTriggers.push('new_message_received', 'keyword_match')
   }
   // new_contact_created fires only when the webhook just auto-created the

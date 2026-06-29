@@ -510,6 +510,53 @@ export type AutomationStepConfig =
   | Record<string, never>
   | Record<string, unknown>;
 
+export interface Product {
+  id: string;
+  /** Account tenancy key (migration 029). */
+  account_id: string;
+  name: string;
+  description?: string | null;
+  /** Authoritative unit price — the AI never sets this. */
+  unit_price: number;
+  currency: string;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export type OrderStatus =
+  | 'PENDING_PAYMENT'
+  | 'SUCCESS'
+  | 'FAILED'
+  | 'EXPIRED';
+
+/** One priced line on an order, computed server-side from `products`. */
+export interface OrderItem {
+  product_id?: string | null;
+  name: string;
+  quantity: number;
+  unit_price: number;
+  customization?: string | null;
+}
+
+export interface Order {
+  id: string;
+  account_id: string;
+  conversation_id?: string | null;
+  contact_id?: string | null;
+  phone: string;
+  amount: number;
+  currency: string;
+  status: OrderStatus;
+  items?: OrderItem[] | null;
+  payhere_ref?: string | null;
+  expires_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type CheckoutState = 'IDLE' | 'WAITING_FOR_PAYMENT' | 'COMPLETED';
+
 export type ScheduledMessageStatus =
   | 'scheduled'
   | 'sending'

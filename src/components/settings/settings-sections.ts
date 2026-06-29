@@ -4,6 +4,7 @@ import {
   FileText,
   KeyRound,
   LayoutGrid,
+  Package,
   Palette,
   PlugZap,
   Shield,
@@ -31,6 +32,7 @@ export const SETTINGS_SECTIONS = [
   'fields',
   'deals',
   'knowledge',
+  'products',
   'members',
   'api',
 ] as const;
@@ -57,6 +59,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   fields: { id: 'fields', label: 'Fields & tags', icon: Tags, group: 'workspace' },
   deals: { id: 'deals', label: 'Deals & currency', icon: Coins, group: 'workspace' },
   knowledge: { id: 'knowledge', label: 'Knowledge bases', icon: BookOpen, group: 'workspace' },
+  products: { id: 'products', label: 'Products', icon: Package, group: 'workspace' },
   members: { id: 'members', label: 'Team members', icon: UsersRound, group: 'workspace' },
   api: { id: 'api', label: 'API keys', icon: KeyRound, group: 'workspace' },
 };

@@ -825,6 +825,84 @@ export async function sendInteractiveButtons(
   return { messageId: data.messages[0].id }
 }
 
+export interface SendCtaUrlArgs {
+  phoneNumberId: string
+  accessToken: string
+  to: string
+  /** Body text shown above the button. */
+  bodyText: string
+  /** Button label, e.g. "Pay Now 💳" (≤ 20 chars). */
+  buttonText: string
+  /** The URL the button opens (the PayHere checkout link). */
+  url: string
+  /** Optional plain-text header (≤ 60 chars). */
+  headerText?: string
+  /** Optional grey footer line (≤ 60 chars). */
+  footerText?: string
+}
+
+/**
+ * Send an interactive "Call To Action URL" message — a single button
+ * that opens a URL when tapped. Used by AI Checkout to surface the
+ * PayHere payment link. On Android this opens WhatsApp's in-app browser;
+ * iOS may hand off to the system browser.
+ *
+ * Docs: https://developers.facebook.com/docs/whatsapp/cloud-api/messages/interactive-cta-url-button-messages
+ */
+export async function sendCtaUrlMessage(args: SendCtaUrlArgs): Promise<MetaSendResult> {
+  const { phoneNumberId, accessToken, to, bodyText, buttonText, url, headerText, footerText } = args
+  validateInteractiveBody(bodyText)
+  validateInteractiveHeaderFooter(headerText, footerText)
+  if (!buttonText || buttonText.length > INTERACTIVE_LIMITS.buttonTitleMaxLength) {
+    throw new Error(
+      `CTA button text must be 1-${INTERACTIVE_LIMITS.buttonTitleMaxLength} chars (got "${buttonText}").`,
+    )
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new Error(`CTA url is not a valid URL: ${url}`)
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error('CTA url must use http or https.')
+  }
+
+  const interactive: Record<string, unknown> = {
+    type: 'cta_url',
+    body: { text: bodyText },
+    action: {
+      name: 'cta_url',
+      parameters: { display_text: buttonText, url },
+    },
+  }
+  if (headerText) interactive.header = { type: 'text', text: headerText }
+  if (footerText) interactive.footer = { text: footerText }
+
+  const body = {
+    messaging_product: 'whatsapp',
+    recipient_type: 'individual',
+    to,
+    type: 'interactive',
+    interactive,
+  }
+
+  const endpoint = `${META_API_BASE}/${phoneNumberId}/messages`
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(body),
+  })
+  if (!response.ok) {
+    await throwMetaError(response, `Meta API error: ${response.status}`)
+  }
+  const data = await response.json()
+  return { messageId: data.messages[0].id }
+}
+
 export interface InteractiveListRow {
   /** Stable id sent back in the webhook when tapped (≤ 200 chars). */
   id: string

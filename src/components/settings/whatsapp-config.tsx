@@ -19,6 +19,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { SettingsPanelHead } from './settings-panel-head';
@@ -42,9 +43,12 @@ export function WhatsAppConfig() {
   // context and key every read off it — so a teammate who just
   // joined an account sees the inviter's saved config without
   // having to re-enter anything.
-  const { user, accountId, loading: authLoading, profileLoading } = useAuth();
+  const { user, accountId, canEditSettings, loading: authLoading, profileLoading } = useAuth();
 
   const [loading, setLoading] = useState(true);
+  // AI Checkout on/off — stored on whatsapp_config.ai_checkout_enabled.
+  const [aiCheckoutEnabled, setAiCheckoutEnabled] = useState(false);
+  const [togglingCheckout, setTogglingCheckout] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -106,6 +110,9 @@ export function WhatsAppConfig() {
 
       if (data) {
         setConfig(data);
+        setAiCheckoutEnabled(
+          Boolean((data as { ai_checkout_enabled?: boolean }).ai_checkout_enabled),
+        );
         setPhoneNumberId(data.phone_number_id || '');
         setWabaId(data.waba_id || '');
         setAccessToken(MASKED_TOKEN);
@@ -357,6 +364,32 @@ export function WhatsAppConfig() {
   function handleCopyWebhookUrl() {
     navigator.clipboard.writeText(webhookUrl);
     toast.success('Webhook URL copied to clipboard');
+  }
+
+  async function handleToggleAiCheckout(next: boolean) {
+    if (!accountId) return;
+    // Optimistic flip; revert on error. The whatsapp_config_update RLS
+    // policy restricts this to admins, so a non-admin write is rejected.
+    setAiCheckoutEnabled(next);
+    setTogglingCheckout(true);
+    try {
+      const { error } = await supabase
+        .from('whatsapp_config')
+        .update({ ai_checkout_enabled: next })
+        .eq('account_id', accountId);
+      if (error) {
+        setAiCheckoutEnabled(!next);
+        toast.error(error.message || 'Failed to update AI Checkout');
+        return;
+      }
+      toast.success(next ? 'AI Checkout enabled' : 'AI Checkout disabled');
+    } catch (err) {
+      setAiCheckoutEnabled(!next);
+      console.error('AI checkout toggle error:', err);
+      toast.error('Could not reach the server');
+    } finally {
+      setTogglingCheckout(false);
+    }
   }
 
   if (loading) {
@@ -688,6 +721,39 @@ export function WhatsAppConfig() {
             </div>
           </CardContent>
         </Card>
+
+        {/* AI Checkout toggle */}
+        {config && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-foreground">AI Checkout Assistant</CardTitle>
+              <CardDescription className="text-muted-foreground">
+                Let Gemini automatically handle customer orders and send a
+                PayHere payment button in chat. Prices come from your{' '}
+                <strong className="text-foreground">Products</strong> list, never
+                the AI.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between gap-4">
+                <Label htmlFor="ai-checkout-switch" className="text-foreground">
+                  Enable AI Checkout Assistant
+                  <span className="mt-0.5 block text-xs font-normal text-muted-foreground">
+                    Turn off during stock-outs or heavy order volume. When on, it
+                    handles inbound messages and suppresses the AI Reply
+                    automation for that message.
+                  </span>
+                </Label>
+                <Switch
+                  id="ai-checkout-switch"
+                  checked={aiCheckoutEnabled}
+                  disabled={!canEditSettings || togglingCheckout}
+                  onCheckedChange={handleToggleAiCheckout}
+                />
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Action Buttons */}
         <div className="flex flex-wrap gap-3">

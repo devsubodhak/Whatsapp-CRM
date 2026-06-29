@@ -17,6 +17,7 @@ import { DealsSettings } from '@/components/settings/deals-settings';
 import { MembersTab } from '@/components/settings/members-tab';
 import { ApiKeysSettings } from '@/components/settings/api-keys-settings';
 import { KnowledgeBasesSettings } from '@/components/settings/knowledge-bases-settings';
+import { ProductsSettings } from '@/components/settings/products-settings';
 import {
   resolveSection,
   type SettingsSection,
@@ -61,6 +62,7 @@ export default function SettingsPage() {
     fields: <FieldsAndTagsPanel />,
     deals: <DealsSettings />,
     knowledge: <KnowledgeBasesSettings />,
+    products: <ProductsSettings />,
     members: <MembersTab />,
     api: <ApiKeysSettings />,
   };
