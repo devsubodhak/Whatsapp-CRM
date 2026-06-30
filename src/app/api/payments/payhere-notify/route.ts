@@ -142,7 +142,7 @@ async function sendConfirmation(order: OrderForConfirm, success: boolean): Promi
     const db = supabaseAdmin()
     const { data: cfg } = await db
       .from('whatsapp_config')
-      .select('phone_number_id, access_token')
+      .select('phone_number_id, access_token, post_purchase_message')
       .eq('account_id', order.account_id)
       .maybeSingle()
     if (!cfg?.access_token) return
@@ -173,6 +173,29 @@ async function sendConfirmation(order: OrderForConfirm, success: boolean): Promi
         .from('conversations')
         .update({ last_message_text: text, last_message_at: new Date().toISOString(), updated_at: new Date().toISOString() })
         .eq('id', order.conversation_id)
+    }
+
+    // Configured post-purchase follow-up (thank-you / review link).
+    if (success) {
+      const postMsg = (cfg as { post_purchase_message?: string | null }).post_purchase_message?.trim()
+      if (postMsg) {
+        const { messageId: pmId } = await sendTextMessage({
+          phoneNumberId: cfg.phone_number_id,
+          accessToken,
+          to: order.phone,
+          text: postMsg,
+        })
+        if (order.conversation_id) {
+          await db.from('messages').insert({
+            conversation_id: order.conversation_id,
+            sender_type: 'bot',
+            content_type: 'text',
+            content_text: postMsg,
+            message_id: pmId,
+            status: 'sent',
+          })
+        }
+      }
     }
   } catch (err) {
     console.error('[payhere-notify] confirmation send failed:', err)

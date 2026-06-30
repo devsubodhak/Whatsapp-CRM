@@ -16,7 +16,12 @@
 // ------------------------------------------------------------
 
 import { supabaseAdmin } from '@/lib/automations/admin-client'
-import { sendTextMessage, sendCtaUrlMessage } from '@/lib/whatsapp/meta-api'
+import {
+  sendTextMessage,
+  sendCtaUrlMessage,
+  sendInteractiveButtons,
+  sendMediaMessage,
+} from '@/lib/whatsapp/meta-api'
 import { runCheckoutTurn, type CheckoutTurn, type CatalogEntry } from '@/lib/ai/gemini-checkout'
 import { checkRateLimit, RATE_LIMITS } from '@/lib/rate-limit'
 import type { OrderItem } from '@/types'
@@ -36,6 +41,8 @@ export interface CheckoutGatewayInput {
   messageText: string
   /** An inbound media attachment, if any (used to receive bank slips). */
   media?: { url: string; type: string } | null
+  /** Interactive button reply id, if the customer tapped one of ours. */
+  buttonReplyId?: string | null
   phoneNumberId: string
   accessToken: string
   /** Public origin for building the payment link, e.g. https://x.ngrok.app */
@@ -49,6 +56,12 @@ export async function runCheckoutGateway(
 ): Promise<{ consumed: boolean }> {
   try {
     const db = supabaseAdmin()
+
+    // The customer tapped one of our payment-choice buttons.
+    if (input.buttonReplyId?.startsWith('checkout_')) {
+      return handlePaymentChoice(db, input, input.buttonReplyId)
+    }
+
     const text = input.messageText?.trim() ?? ''
     const isImage = !!input.media && input.media.type === 'image'
     // Nothing actionable (no text and no image) → let normal processing run.
@@ -226,6 +239,28 @@ export async function runCheckoutGateway(
       return { consumed: true }
     }
 
+    // The customer asked to see a product → send its photo/video.
+    if (result.kind === 'media') {
+      const p = matchProduct(products, result.productName)
+      if (!p) {
+        await sendAndLog(
+          db,
+          input,
+          `I couldn’t find that one. We have: ${products.map((x) => x.name).join(', ')}. Which would you like to see? 🙂`,
+        )
+        return { consumed: true }
+      }
+      const sent = await sendProductMedia(db, input, p)
+      if (!sent) {
+        await sendAndLog(
+          db,
+          input,
+          `Sorry, I don’t have a photo of *${p.name}* on hand 😔. I can connect you with our team for more details.`,
+        )
+      }
+      return { consumed: true }
+    }
+
     // result.kind === 'invoice' — price it from the catalog (NOT the AI).
     const match = matchProduct(products, result.invoice.item_type)
     if (!match) {
@@ -285,42 +320,59 @@ export async function runCheckoutGateway(
       .update({ checkout_state: 'WAITING_FOR_PAYMENT', updated_at: new Date().toISOString() })
       .eq('id', input.conversationId)
 
-    const payUrl = `${input.baseUrl.replace(/\/$/, '')}/api/payments/pay?orderId=${order.id}`
     const orderNo = order.order_number ? `#${order.order_number}` : ''
-    const lines = [
+    const summary = [
       `🧾 *Order ${orderNo}*`,
       '',
       `📦 *Item:* ${match.name}`,
       `🔢 *Qty:* ${quantity}`,
     ]
-    if (items[0].customization) lines.push(`🎨 *Customization:* ${items[0].customization}`)
-    if (customerName) lines.push(`👤 *Name:* ${customerName}`)
-    if (deliveryAddress) lines.push(`📍 *Deliver to:* ${deliveryAddress}`)
-    lines.push('', `💰 *Total:* ${match.currency} ${amount.toLocaleString()}`)
-    lines.push('', '*How would you like to pay?*')
-    lines.push('• 💳 *Card* — tap *Pay Now* below')
-    if (input.bankDetails?.trim()) {
-      lines.push('• 🏦 *Bank transfer:*')
-      lines.push(input.bankDetails.trim())
-      lines.push('…then send a *photo of your slip* here and we’ll verify it 📸')
-    }
-    const bodyText = lines.join('\n')
+    if (items[0].customization) summary.push(`🎨 *Customization:* ${items[0].customization}`)
+    if (customerName) summary.push(`👤 *Name:* ${customerName}`)
+    if (deliveryAddress) summary.push(`📍 *Deliver to:* ${deliveryAddress}`)
+    summary.push('', `💰 *Total:* ${match.currency} ${amount.toLocaleString()}`)
+    const summaryText = summary.join('\n')
+    const payUrl = `${input.baseUrl.replace(/\/$/, '')}/api/payments/pay?orderId=${order.id}`
 
-    try {
-      const { messageId } = await sendCtaUrlMessage({
-        phoneNumberId: input.phoneNumberId,
-        accessToken: input.accessToken,
-        to: input.phone,
-        bodyText,
-        buttonText: 'Pay Now 💳',
-        url: payUrl,
-      })
-      await logBotMessage(db, input.conversationId, bodyText, messageId)
-    } catch (err) {
-      console.error('[checkout] cta send failed, falling back to link text:', err)
-      // Fallback: some numbers / clients don't render cta_url — send the
-      // link as plain text so the customer can still pay.
-      await sendAndLog(db, input, `${bodyText}\n\nPay here: ${payUrl}`)
+    if (input.bankDetails?.trim()) {
+      // Bank transfer is available → let the customer CHOOSE the method
+      // with buttons. Tapping one routes back through handlePaymentChoice.
+      try {
+        const { messageId } = await sendInteractiveButtons({
+          phoneNumberId: input.phoneNumberId,
+          accessToken: input.accessToken,
+          to: input.phone,
+          bodyText: `${summaryText}\n\nHow would you like to pay? 👇`,
+          buttons: [
+            { id: `checkout_card:${order.id}`, title: '💳 Pay by Card' },
+            { id: `checkout_bank:${order.id}`, title: '🏦 Bank Transfer' },
+          ],
+        })
+        await logBotMessage(db, input.conversationId, summaryText, messageId)
+      } catch (err) {
+        console.error('[checkout] payment buttons failed, falling back:', err)
+        await sendAndLog(
+          db,
+          input,
+          `${summaryText}\n\n💳 *Pay by card:* ${payUrl}\n\n🏦 *Or bank transfer:*\n${input.bankDetails.trim()}\n…then send a *photo of your slip* here 📸`,
+        )
+      }
+    } else {
+      // Card only → send the Pay Now link directly.
+      try {
+        const { messageId } = await sendCtaUrlMessage({
+          phoneNumberId: input.phoneNumberId,
+          accessToken: input.accessToken,
+          to: input.phone,
+          bodyText: `${summaryText}\n\n👇 Tap *Pay Now* to pay securely.`,
+          buttonText: 'Pay Now 💳',
+          url: payUrl,
+        })
+        await logBotMessage(db, input.conversationId, summaryText, messageId)
+      } catch (err) {
+        console.error('[checkout] cta send failed, falling back to link text:', err)
+        await sendAndLog(db, input, `${summaryText}\n\nPay here: ${payUrl}`)
+      }
     }
 
     return { consumed: true }
@@ -334,16 +386,70 @@ export async function runCheckoutGateway(
 // Helpers
 // ------------------------------------------------------------
 
-interface ProductRow {
-  id: string
-  name: string
-  unit_price: number
-  currency: string
+/** Customer tapped a "Pay by Card" / "Bank Transfer" button on an order.
+ *  id form: checkout_card:<orderId> | checkout_bank:<orderId>. */
+async function handlePaymentChoice(
+  db: ReturnType<typeof supabaseAdmin>,
+  input: CheckoutGatewayInput,
+  buttonReplyId: string,
+): Promise<{ consumed: boolean }> {
+  const [action, orderId] = buttonReplyId.replace(/^checkout_/, '').split(':')
+  if (!orderId) return { consumed: true }
+
+  const { data: order } = await db
+    .from('orders')
+    .select('id, status')
+    .eq('id', orderId)
+    .eq('account_id', input.accountId)
+    .maybeSingle()
+  if (!order || order.status !== 'PENDING_PAYMENT') {
+    await sendAndLog(
+      db,
+      input,
+      'That order isn’t awaiting payment anymore. Reply *order* to start a new one. 🙂',
+    )
+    return { consumed: true }
+  }
+
+  if (action === 'card') {
+    const payUrl = `${input.baseUrl.replace(/\/$/, '')}/api/payments/pay?orderId=${order.id}`
+    try {
+      const { messageId } = await sendCtaUrlMessage({
+        phoneNumberId: input.phoneNumberId,
+        accessToken: input.accessToken,
+        to: input.phone,
+        bodyText: '💳 Tap *Pay Now* to pay securely by card.',
+        buttonText: 'Pay Now 💳',
+        url: payUrl,
+      })
+      await logBotMessage(db, input.conversationId, 'Sent card payment link', messageId)
+    } catch {
+      await sendAndLog(db, input, `💳 Pay by card here: ${payUrl}`)
+    }
+    return { consumed: true }
+  }
+
+  if (action === 'bank') {
+    await db
+      .from('orders')
+      .update({ payment_method: 'bank_transfer', updated_at: new Date().toISOString() })
+      .eq('id', order.id)
+    const details = input.bankDetails?.trim() || '(bank details not configured)'
+    await sendAndLog(
+      db,
+      input,
+      `🏦 *Bank transfer*\n\n${details}\n\nOnce you’ve transferred, send a *photo of your payment slip* here 📸. Our team will review it and confirm — we’ll contact you shortly. 🙏`,
+    )
+    return { consumed: true }
+  }
+
+  return { consumed: true }
 }
 
-/** Best-effort match of the AI's item_type to a catalog product:
- *  exact (case-insensitive) first, then substring either direction. */
-function matchProduct(products: ProductRow[], itemType: string): ProductRow | null {
+/** Best-effort match of the AI's item name to a catalog product:
+ *  exact (case-insensitive) first, then substring either direction.
+ *  Generic so callers keep the full product shape (incl. media URLs). */
+function matchProduct<T extends { name: string }>(products: T[], itemType: string): T | null {
   const needle = itemType.trim().toLowerCase()
   if (!needle) return null
   const exact = products.find((p) => p.name.toLowerCase() === needle)
@@ -352,6 +458,38 @@ function matchProduct(products: ProductRow[], itemType: string): ProductRow | nu
     (p) => p.name.toLowerCase().includes(needle) || needle.includes(p.name.toLowerCase()),
   )
   return contains ?? null
+}
+
+/** Send a product's photo (as a real WhatsApp image) and/or its video
+ *  link. Returns whether anything was sent. */
+async function sendProductMedia(
+  db: ReturnType<typeof supabaseAdmin>,
+  input: CheckoutGatewayInput,
+  p: { name: string; description: string | null; image_url: string | null; video_url: string | null },
+): Promise<boolean> {
+  let sentAny = false
+  if (p.image_url) {
+    try {
+      const caption = p.description ? `*${p.name}*\n${p.description}` : `*${p.name}*`
+      const { messageId } = await sendMediaMessage({
+        phoneNumberId: input.phoneNumberId,
+        accessToken: input.accessToken,
+        to: input.phone,
+        kind: 'image',
+        link: p.image_url,
+        caption,
+      })
+      await logBotMessage(db, input.conversationId, `[photo: ${p.name}]`, messageId)
+      sentAny = true
+    } catch (err) {
+      console.error('[checkout] product image send failed:', err)
+    }
+  }
+  if (p.video_url) {
+    await sendAndLog(db, input, `🎥 Video of *${p.name}*:\n${p.video_url}`)
+    sentAny = true
+  }
+  return sentAny
 }
 
 async function sendAndLog(

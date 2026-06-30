@@ -77,6 +77,25 @@ export async function PATCH(
         senderType: 'agent',
         senderId: user.id,
       })
+
+      // Configured post-purchase follow-up (thank-you / review link).
+      const { data: cfg } = await admin
+        .from('whatsapp_config')
+        .select('post_purchase_message')
+        .eq('account_id', accountId)
+        .maybeSingle()
+      const postMsg = (cfg?.post_purchase_message as string | null)?.trim()
+      if (postMsg) {
+        await engineSendText({
+          accountId,
+          userId: user.id,
+          conversationId: order.conversation_id,
+          contactId: order.contact_id,
+          text: postMsg,
+          senderType: 'agent',
+          senderId: user.id,
+        })
+      }
     } catch (err) {
       console.error('[orders] confirmation message failed:', err)
     }

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { decrypt, encrypt, isLegacyFormat } from '@/lib/whatsapp/encryption'
-import { getMediaUrl, downloadMedia } from '@/lib/whatsapp/meta-api'
+import { getMediaUrl } from '@/lib/whatsapp/meta-api'
 import { normalizePhone } from '@/lib/whatsapp/phone-utils'
 import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe'
 import { verifyMetaWebhookSignature } from '@/lib/whatsapp/webhook-signature'
@@ -736,12 +736,16 @@ async function processMessage(
   // An inbound image is how a customer sends their bank-transfer slip, so
   // the gateway also runs for images (not just text).
   const inboundImage = mediaType === 'image' && mediaUrl ? { url: mediaUrl, type: 'image' } : null
+  // Our own payment-choice button taps (Pay by Card / Bank Transfer) come
+  // back as interactive replies prefixed "checkout_" — those belong to the
+  // gateway, not the Flows runner.
+  const checkoutButtonId =
+    interactiveReplyId && interactiveReplyId.startsWith('checkout_') ? interactiveReplyId : null
   let checkoutConsumed = false
   if (
     checkout.aiCheckoutEnabled &&
     !flowConsumed &&
-    !interactiveReplyId &&
-    (inboundForCheckout.trim() || inboundImage)
+    (checkoutButtonId || (!interactiveReplyId && (inboundForCheckout.trim() || inboundImage)))
   ) {
     const checkoutResult = await runCheckoutGateway({
       accountId,
@@ -751,6 +755,7 @@ async function processMessage(
       phone: senderPhone,
       messageText: inboundForCheckout,
       media: inboundImage,
+      buttonReplyId: checkoutButtonId,
       phoneNumberId: checkout.phoneNumberId,
       accessToken,
       baseUrl: checkout.baseUrl,

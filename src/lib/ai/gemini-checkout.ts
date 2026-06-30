@@ -56,9 +56,26 @@ export interface InvoiceArgs {
 export type CheckoutResult =
   | { kind: 'reply'; text: string }
   | { kind: 'invoice'; invoice: InvoiceArgs }
+  | { kind: 'media'; productName: string }
 
-const GENERATE_INVOICE_TOOL = {
+const CHECKOUT_TOOLS = {
   function_declarations: [
+    {
+      name: 'send_product_media',
+      description:
+        'Call this when the customer asks to SEE a product — e.g. "send a photo", "picture", "image", "show me", "video". Provide the product name to send its photo/video.',
+      parameters: {
+        type: 'OBJECT',
+        properties: {
+          product_name: {
+            type: 'STRING',
+            description:
+              'The product whose photo/video to send, matching one of the available product names.',
+          },
+        },
+        required: ['product_name'],
+      },
+    },
     {
       name: 'generate_invoice',
       description:
@@ -138,7 +155,7 @@ function buildSystemInstruction(input: CheckoutInput): string {
   parts.push(
     `RULES:
 1. GENERAL QUESTIONS: answer from the BUSINESS INFORMATION above. If the answer isn't there, don't guess — offer to connect them with the team. Do NOT call any tool for a general question.
-2. PHOTOS/VIDEOS: if the customer asks to see a product, share its photo and/or video link from the [brackets] above by pasting the raw URL on its own line (WhatsApp will preview it). If a product has no link, say a photo isn't available and offer to connect the team.
+2. PHOTOS/VIDEOS: if the customer asks to SEE a product (photo, picture, image, video, "show me"), call the send_product_media tool with the product name — do NOT paste the URL yourself. If the product has no photo/video the tool will handle it.
 3. ORDERING: only sell products from the AVAILABLE PRODUCTS list. If they want something not listed, say it's not available and offer what is.
 4. To complete an order you MUST collect, in a natural order, ALL of: (a) which product, (b) quantity, (c) any customization, (d) the customer's name, and (e) the full delivery address. Ask for whatever is missing — one or two short questions at a time. Do NOT skip the name or delivery address.
 5. NEVER state a total or made-up price beyond quoting the per-unit prices listed. The system calculates the final amount and sends the payment link.
@@ -195,7 +212,7 @@ export async function runCheckoutTurn(input: CheckoutInput): Promise<CheckoutRes
     body: JSON.stringify({
       system_instruction: { parts: [{ text: buildSystemInstruction(input) }] },
       contents: buildContents(input),
-      tools: [GENERATE_INVOICE_TOOL],
+      tools: [CHECKOUT_TOOLS],
       generationConfig,
     }),
   })
@@ -217,6 +234,12 @@ export async function runCheckoutTurn(input: CheckoutInput): Promise<CheckoutRes
 
   // Prefer a tool call if the model made one.
   const call = parts.find((p) => p.functionCall)?.functionCall
+
+  if (call && call.name === 'send_product_media') {
+    const productName = String(call.args?.product_name ?? '').trim()
+    if (productName) return { kind: 'media', productName }
+  }
+
   if (call && call.name === 'generate_invoice') {
     const a = call.args ?? {}
     const quantity = Math.max(1, Math.floor(Number(a.quantity) || 1))

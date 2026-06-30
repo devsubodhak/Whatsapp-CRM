@@ -33,6 +33,8 @@ export function AiSettings() {
   const [saving, setSaving] = useState(false);
   const [bankDetails, setBankDetails] = useState('');
   const [savingBank, setSavingBank] = useState(false);
+  const [postPurchase, setPostPurchase] = useState('');
+  const [savingPost, setSavingPost] = useState(false);
 
   const load = useCallback(async () => {
     if (!accountId) {
@@ -41,7 +43,7 @@ export function AiSettings() {
     }
     const { data } = await supabase
       .from('whatsapp_config')
-      .select('ai_checkout_enabled, bank_transfer_details')
+      .select('ai_checkout_enabled, bank_transfer_details, post_purchase_message')
       .eq('account_id', accountId)
       .maybeSingle();
     setHasConfig(!!data);
@@ -49,26 +51,34 @@ export function AiSettings() {
     setBankDetails(
       (data as { bank_transfer_details?: string | null } | null)?.bank_transfer_details ?? '',
     );
+    setPostPurchase(
+      (data as { post_purchase_message?: string | null } | null)?.post_purchase_message ?? '',
+    );
     setLoading(false);
   }, [accountId, supabase]);
 
-  async function saveBankDetails() {
+  async function saveField(
+    column: 'bank_transfer_details' | 'post_purchase_message',
+    value: string,
+    setSaving: (b: boolean) => void,
+    successMsg: string,
+  ) {
     if (!accountId) return;
-    setSavingBank(true);
+    setSaving(true);
     try {
       const { error } = await supabase
         .from('whatsapp_config')
-        .update({ bank_transfer_details: bankDetails.trim() || null })
+        .update({ [column]: value.trim() || null })
         .eq('account_id', accountId);
       if (error) {
         toast.error(error.message || 'Failed to save');
         return;
       }
-      toast.success('Bank transfer details saved');
+      toast.success(successMsg);
     } catch {
       toast.error('Could not reach the server');
     } finally {
-      setSavingBank(false);
+      setSaving(false);
     }
   }
 
@@ -173,7 +183,12 @@ export function AiSettings() {
               className="max-h-48 min-h-28 font-mono text-xs"
             />
             <div className="flex justify-end">
-              <Button onClick={saveBankDetails} disabled={!canEditSettings || savingBank}>
+              <Button
+                onClick={() =>
+                  saveField('bank_transfer_details', bankDetails, setSavingBank, 'Bank transfer details saved')
+                }
+                disabled={!canEditSettings || savingBank}
+              >
                 {savingBank ? (
                   <>
                     <Loader2 className="size-4 animate-spin" />
@@ -181,6 +196,49 @@ export function AiSettings() {
                   </>
                 ) : (
                   'Save bank details'
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {hasConfig && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-foreground">Post-purchase message</CardTitle>
+            <CardDescription className="text-muted-foreground">
+              Sent automatically right after a successful payment (card or
+              verified bank transfer). Great for a thank-you and a review link.
+              Leave blank to send nothing extra.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Label htmlFor="post-purchase" className="sr-only">
+              Post-purchase message
+            </Label>
+            <Textarea
+              id="post-purchase"
+              value={postPurchase}
+              onChange={(e) => setPostPurchase(e.target.value)}
+              disabled={!canEditSettings}
+              placeholder={'🙏 Thanks for choosing YANTECH LANKA! We’d love your feedback — please review us here: https://g.page/r/your-review-link'}
+              className="max-h-48 min-h-24"
+            />
+            <div className="flex justify-end">
+              <Button
+                onClick={() =>
+                  saveField('post_purchase_message', postPurchase, setSavingPost, 'Post-purchase message saved')
+                }
+                disabled={!canEditSettings || savingPost}
+              >
+                {savingPost ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Saving…
+                  </>
+                ) : (
+                  'Save message'
                 )}
               </Button>
             </div>

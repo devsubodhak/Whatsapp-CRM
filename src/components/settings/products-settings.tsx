@@ -8,9 +8,10 @@
 // model). Any member sees it; admin+ can edit (RLS + <RequireRole>).
 // ============================================================
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { Loader2, Package, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Loader2, Package, Pencil, Plus, Trash2, Upload } from 'lucide-react';
+import { uploadAccountMedia } from '@/lib/storage/upload-media';
 
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -209,6 +210,30 @@ function ProductDialog({
   const [imageUrl, setImageUrl] = useState('');
   const [videoUrl, setVideoUrl] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function handleImageFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (fileRef.current) fileRef.current.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please pick an image file');
+      return;
+    }
+    setUploading(true);
+    try {
+      // chat-media is a public bucket, so Meta can fetch the URL when the
+      // assistant sends the photo to a customer.
+      const { publicUrl } = await uploadAccountMedia('chat-media', file);
+      setImageUrl(publicUrl);
+      toast.success('Image uploaded');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
+  }
 
   useEffect(() => {
     if (open) {
@@ -327,15 +352,46 @@ function ProductDialog({
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="product-image" className="text-muted-foreground">
-              Photo URL (optional)
-            </Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="product-image" className="text-muted-foreground">
+                Photo (optional)
+              </Label>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => fileRef.current?.click()}
+                disabled={uploading}
+              >
+                {uploading ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Upload className="size-4" />
+                )}
+                Upload image
+              </Button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={handleImageFile}
+              />
+            </div>
             <Input
               id="product-image"
               value={imageUrl}
-              placeholder="https://… (image the AI shares when asked)"
+              placeholder="Upload above, or paste an image URL"
               onChange={(e) => setImageUrl(e.target.value)}
             />
+            {imageUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={imageUrl}
+                alt="Product preview"
+                className="mt-1 max-h-32 rounded-lg border border-border object-cover"
+              />
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="product-video" className="text-muted-foreground">
