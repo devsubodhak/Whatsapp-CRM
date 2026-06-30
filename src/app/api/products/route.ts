@@ -60,6 +60,8 @@ export async function POST(request: Request) {
       unit_price: unitPrice,
       currency: typeof body.currency === 'string' && body.currency ? body.currency : 'LKR',
       active: body.active === undefined ? true : !!body.active,
+      image_url: typeof body.image_url === 'string' && body.image_url.trim() ? body.image_url.trim() : null,
+      video_url: typeof body.video_url === 'string' && body.video_url.trim() ? body.video_url.trim() : null,
     })
     .select()
     .single()

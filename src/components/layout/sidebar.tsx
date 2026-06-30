@@ -15,6 +15,7 @@ import {
   Radio,
   Settings,
   Shield,
+  ShoppingBag,
   User,
   UserCog,
   Users,
@@ -92,6 +93,7 @@ const navItems: NavItem[] = [
   { href: "/contacts", label: "Contacts", icon: Users },
   { href: "/pipelines", label: "Pipelines", icon: GitBranch },
   { href: "/broadcasts", label: "Broadcasts", icon: Radio },
+  { href: "/orders", label: "Orders", icon: ShoppingBag },
   { href: "/automations", label: "Automations", icon: Zap },
   { href: "/flows", label: "Flows", icon: Workflow, beta: true },
 ];

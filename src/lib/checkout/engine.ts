@@ -118,7 +118,7 @@ export async function runCheckoutGateway(
     const [{ data: productRows }, { data: kbRows }] = await Promise.all([
       db
         .from('products')
-        .select('id, name, unit_price, currency, description, active')
+        .select('id, name, unit_price, currency, description, image_url, video_url, active')
         .eq('account_id', input.accountId)
         .eq('active', true),
       db.from('knowledge_bases').select('content').eq('account_id', input.accountId),
@@ -129,6 +129,8 @@ export async function runCheckoutGateway(
       unit_price: number
       currency: string
       description: string | null
+      image_url: string | null
+      video_url: string | null
     }[]
     // Concatenate all knowledge bases (capped) as the business context.
     const knowledge = (kbRows ?? [])
@@ -144,6 +146,8 @@ export async function runCheckoutGateway(
       unit_price: Number(p.unit_price),
       currency: p.currency,
       description: p.description,
+      image_url: p.image_url,
+      video_url: p.video_url,
     }))
 
     // Recent conversation context (oldest-first), excluding the current
@@ -209,6 +213,9 @@ export async function runCheckoutGateway(
       },
     ]
 
+    const deliveryAddress = result.invoice.delivery_address?.trim() || null
+    const customerName = result.invoice.customer_name?.trim() || null
+
     const { data: order, error: orderErr } = await db
       .from('orders')
       .insert({
@@ -216,13 +223,16 @@ export async function runCheckoutGateway(
         conversation_id: input.conversationId,
         contact_id: input.contactId,
         phone: input.phone,
+        customer_name: customerName,
+        delivery_address: deliveryAddress,
+        delivery_phone: input.phone,
         amount,
         currency: match.currency,
         status: 'PENDING_PAYMENT',
         items,
         expires_at: new Date(Date.now() + ORDER_TTL_MS).toISOString(),
       })
-      .select('id')
+      .select('id, order_number')
       .single()
     if (orderErr || !order) {
       console.error('[checkout] order insert failed:', orderErr)
@@ -235,11 +245,19 @@ export async function runCheckoutGateway(
       .eq('id', input.conversationId)
 
     const payUrl = `${input.baseUrl.replace(/\/$/, '')}/api/payments/pay?orderId=${order.id}`
-    const custom =
-      items[0].customization ? `\nCustomization: ${items[0].customization}` : ''
-    const bodyText =
-      `🧾 Order summary\n${match.name} × ${quantity}${custom}\n` +
-      `Total: ${match.currency} ${amount.toLocaleString()}\n\nTap below to pay securely.`
+    const orderNo = order.order_number ? `#${order.order_number}` : ''
+    const lines = [
+      `🧾 *Order ${orderNo}*`,
+      '',
+      `📦 *Item:* ${match.name}`,
+      `🔢 *Qty:* ${quantity}`,
+    ]
+    if (items[0].customization) lines.push(`🎨 *Customization:* ${items[0].customization}`)
+    if (customerName) lines.push(`👤 *Name:* ${customerName}`)
+    if (deliveryAddress) lines.push(`📍 *Deliver to:* ${deliveryAddress}`)
+    lines.push('', `💰 *Total:* ${match.currency} ${amount.toLocaleString()}`)
+    lines.push('', '👇 Tap *Pay Now* below to pay securely.')
+    const bodyText = lines.join('\n')
 
     try {
       const { messageId } = await sendCtaUrlMessage({

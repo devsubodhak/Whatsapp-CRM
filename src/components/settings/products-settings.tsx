@@ -206,6 +206,8 @@ function ProductDialog({
   const [price, setPrice] = useState('');
   const [currency, setCurrency] = useState('LKR');
   const [description, setDescription] = useState('');
+  const [imageUrl, setImageUrl] = useState('');
+  const [videoUrl, setVideoUrl] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -214,6 +216,8 @@ function ProductDialog({
       setPrice(existing ? String(existing.unit_price) : '');
       setCurrency(existing?.currency ?? 'LKR');
       setDescription(existing?.description ?? '');
+      setImageUrl(existing?.image_url ?? '');
+      setVideoUrl(existing?.video_url ?? '');
     }
   }, [open, existing]);
 
@@ -239,6 +243,8 @@ function ProductDialog({
           unit_price: unitPrice,
           currency: currency.trim() || 'LKR',
           description: description.trim() || null,
+          image_url: imageUrl.trim() || null,
+          video_url: videoUrl.trim() || null,
         }),
       });
       const payload = await res.json().catch(() => ({}));
@@ -318,6 +324,28 @@ function ProductDialog({
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Helps the AI describe the item to customers"
               className="max-h-32 min-h-20"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="product-image" className="text-muted-foreground">
+              Photo URL (optional)
+            </Label>
+            <Input
+              id="product-image"
+              value={imageUrl}
+              placeholder="https://… (image the AI shares when asked)"
+              onChange={(e) => setImageUrl(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="product-video" className="text-muted-foreground">
+              Video link (optional)
+            </Label>
+            <Input
+              id="product-video"
+              value={videoUrl}
+              placeholder="https://youtube.com/… (the AI shares when asked)"
+              onChange={(e) => setVideoUrl(e.target.value)}
             />
           </div>
         </div>

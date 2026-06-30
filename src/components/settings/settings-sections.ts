@@ -1,5 +1,4 @@
 import {
-  BookOpen,
   Coins,
   FileText,
   KeyRound,
@@ -8,6 +7,7 @@ import {
   Palette,
   PlugZap,
   Shield,
+  Sparkles,
   Tags,
   User,
   UsersRound,
@@ -31,7 +31,7 @@ export const SETTINGS_SECTIONS = [
   'templates',
   'fields',
   'deals',
-  'knowledge',
+  'ai',
   'products',
   'members',
   'api',
@@ -58,7 +58,7 @@ export const SECTION_META: Record<SettingsSection, SectionMeta> = {
   templates: { id: 'templates', label: 'Templates', icon: FileText, group: 'workspace' },
   fields: { id: 'fields', label: 'Fields & tags', icon: Tags, group: 'workspace' },
   deals: { id: 'deals', label: 'Deals & currency', icon: Coins, group: 'workspace' },
-  knowledge: { id: 'knowledge', label: 'Knowledge bases', icon: BookOpen, group: 'workspace' },
+  ai: { id: 'ai', label: 'AI Assistant', icon: Sparkles, group: 'workspace' },
   products: { id: 'products', label: 'Products', icon: Package, group: 'workspace' },
   members: { id: 'members', label: 'Team members', icon: UsersRound, group: 'workspace' },
   api: { id: 'api', label: 'API keys', icon: KeyRound, group: 'workspace' },
@@ -82,6 +82,8 @@ function isSection(value: string | null): value is SettingsSection {
  */
 export function resolveSection(raw: string | null): SettingsSection {
   if (raw === 'tags' || raw === 'custom-fields') return 'fields';
+  // The standalone Knowledge bases tab was folded into the AI Assistant tab.
+  if (raw === 'knowledge') return 'ai';
   if (isSection(raw)) return raw;
   return DEFAULT_SECTION;
 }

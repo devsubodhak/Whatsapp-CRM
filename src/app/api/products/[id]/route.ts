@@ -27,6 +27,10 @@ export async function PATCH(
   if ('description' in body) update.description = body.description ?? null
   if ('currency' in body && typeof body.currency === 'string') update.currency = body.currency
   if ('active' in body) update.active = !!body.active
+  if ('image_url' in body)
+    update.image_url = typeof body.image_url === 'string' && body.image_url.trim() ? body.image_url.trim() : null
+  if ('video_url' in body)
+    update.video_url = typeof body.video_url === 'string' && body.video_url.trim() ? body.video_url.trim() : null
   if ('unit_price' in body) {
     const unitPrice = Number(body.unit_price)
     if (!Number.isFinite(unitPrice) || unitPrice < 0) {

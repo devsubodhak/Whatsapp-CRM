@@ -520,6 +520,10 @@ export interface Product {
   unit_price: number;
   currency: string;
   active: boolean;
+  /** Product photo URL — the assistant shares it when a customer asks. */
+  image_url?: string | null;
+  /** YouTube (or other) video link the assistant can share. */
+  video_url?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -542,15 +546,23 @@ export interface OrderItem {
 export interface Order {
   id: string;
   account_id: string;
+  /** Human-friendly incrementing number shown to the customer (migration 030). */
+  order_number?: number | null;
   conversation_id?: string | null;
   contact_id?: string | null;
   phone: string;
+  /** Contact + delivery details the assistant collects before payment. */
+  customer_name?: string | null;
+  delivery_address?: string | null;
+  delivery_phone?: string | null;
   amount: number;
   currency: string;
   status: OrderStatus;
   items?: OrderItem[] | null;
   payhere_ref?: string | null;
   expires_at?: string | null;
+  /** Set when an admin ticks the confirmation checkbox on the dashboard. */
+  confirmed_at?: string | null;
   created_at: string;
   updated_at: string;
 }
