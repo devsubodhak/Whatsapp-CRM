@@ -530,9 +530,12 @@ export interface Product {
 
 export type OrderStatus =
   | 'PENDING_PAYMENT'
+  | 'AWAITING_VERIFICATION'
   | 'SUCCESS'
   | 'FAILED'
   | 'EXPIRED';
+
+export type PaymentMethod = 'payhere' | 'bank_transfer';
 
 /** One priced line on an order, computed server-side from `products`. */
 export interface OrderItem {
@@ -558,6 +561,10 @@ export interface Order {
   amount: number;
   currency: string;
   status: OrderStatus;
+  /** How the customer is paying. */
+  payment_method?: PaymentMethod;
+  /** Uploaded bank-transfer slip (a /api/whatsapp/media/<id> proxy URL). */
+  slip_url?: string | null;
   items?: OrderItem[] | null;
   payhere_ref?: string | null;
   expires_at?: string | null;

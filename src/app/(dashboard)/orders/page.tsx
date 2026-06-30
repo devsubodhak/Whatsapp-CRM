@@ -13,6 +13,7 @@ import type { Order, OrderItem, OrderStatus } from '@/types';
 
 const STATUS_STYLES: Record<OrderStatus, string> = {
   PENDING_PAYMENT: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
+  AWAITING_VERIFICATION: 'border-sky-500/40 bg-sky-500/10 text-sky-300',
   SUCCESS: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
   FAILED: 'border-red-500/40 bg-red-500/10 text-red-300',
   EXPIRED: 'border-border bg-muted text-muted-foreground',
@@ -20,6 +21,7 @@ const STATUS_STYLES: Record<OrderStatus, string> = {
 
 const STATUS_LABEL: Record<OrderStatus, string> = {
   PENDING_PAYMENT: 'Pending payment',
+  AWAITING_VERIFICATION: 'Awaiting verification',
   SUCCESS: 'Paid',
   FAILED: 'Failed',
   EXPIRED: 'Expired',
@@ -132,6 +134,21 @@ export default function OrdersPage() {
                   >
                     {STATUS_LABEL[o.status]}
                   </span>
+                  {o.payment_method === 'bank_transfer' && (
+                    <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                      🏦 Bank transfer
+                    </span>
+                  )}
+                  {o.slip_url && (
+                    <a
+                      href={o.slip_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-[11px] font-medium text-primary underline underline-offset-2 hover:text-primary/80"
+                    >
+                      🧾 View slip
+                    </a>
+                  )}
                   <span className="text-xs text-muted-foreground">{fmtDate(o.created_at)}</span>
                 </div>
 

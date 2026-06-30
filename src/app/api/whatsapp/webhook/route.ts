@@ -310,6 +310,7 @@ async function processWebhook(
             phoneNumberId,
             aiCheckoutEnabled: Boolean(config.ai_checkout_enabled),
             baseUrl,
+            bankDetails: (config.bank_transfer_details as string | null) ?? null,
           }
         )
       }
@@ -548,7 +549,12 @@ async function processMessage(
   // AI Checkout context — the phone number id to send through, whether
   // the feature is enabled for this account, and the public base URL
   // for building the payment link.
-  checkout: { phoneNumberId: string; aiCheckoutEnabled: boolean; baseUrl: string }
+  checkout: {
+    phoneNumberId: string
+    aiCheckoutEnabled: boolean
+    baseUrl: string
+    bankDetails: string | null
+  }
 ) {
   const senderPhone = normalizePhone(message.from)
   const contactName = contact.profile.name
@@ -727,12 +733,15 @@ async function processMessage(
   // the AI Reply automation doesn't also respond.
   // ============================================================
   const inboundForCheckout = contentText ?? message.text?.body ?? ''
+  // An inbound image is how a customer sends their bank-transfer slip, so
+  // the gateway also runs for images (not just text).
+  const inboundImage = mediaType === 'image' && mediaUrl ? { url: mediaUrl, type: 'image' } : null
   let checkoutConsumed = false
   if (
     checkout.aiCheckoutEnabled &&
     !flowConsumed &&
     !interactiveReplyId &&
-    inboundForCheckout.trim()
+    (inboundForCheckout.trim() || inboundImage)
   ) {
     const checkoutResult = await runCheckoutGateway({
       accountId,
@@ -741,9 +750,11 @@ async function processMessage(
       contactId: contactRecord.id,
       phone: senderPhone,
       messageText: inboundForCheckout,
+      media: inboundImage,
       phoneNumberId: checkout.phoneNumberId,
       accessToken,
       baseUrl: checkout.baseUrl,
+      bankDetails: checkout.bankDetails,
     })
     checkoutConsumed = checkoutResult.consumed
   }

@@ -47,6 +47,28 @@ export function detectScriptHint(text: string): 'sinhala-script' | 'latin' {
   return /[඀-෿]/.test(text) ? 'sinhala-script' : 'latin'
 }
 
+/**
+ * High-precision markers of Singlish (Sinhala written in Latin letters):
+ * very common romanized Sinhala words/particles that essentially never
+ * appear in an English sentence. One hit is a strong "this is Singlish,
+ * not English" signal — which keeps the model from (a) treating it as
+ * English or (b) "correcting" it into Sinhala script.
+ */
+const SINGLISH_MARKERS =
+  /\b(mokak?da|monawa?da?|monada|koheda|kohomada|kiyada|kiyak|kiyanne|mata|oyata|oyaata|oyaa|oyage|machan|aiyo|aney|ane|neda|naha|nadda|ow|owu|puluwan|puluwanda|thiyenawa|thiyenne|hodai|hodada|karanna|denna|ganna|enna|yanna|balanna|ekak|ekata|wage|nam|api|umba|mage|ganne|gaana|gana|kohomda|hari|tikak|witharak|epa|onida|oneda)\b/i
+
+/**
+ * Three-way language hint for the model: Sinhala script, Singlish
+ * (romanized Sinhala), or English. Sinhala script is exact; Singlish is
+ * detected via the markers above; everything else defaults to English.
+ * This is a hint — the prompt still tells the model to trust the message.
+ */
+export function detectLanguageHint(text: string): 'sinhala' | 'singlish' | 'english' {
+  if (/[඀-෿]/.test(text)) return 'sinhala'
+  if (SINGLISH_MARKERS.test(text)) return 'singlish'
+  return 'english'
+}
+
 const LANGUAGE_RULES = `You are replying to a customer on WhatsApp. Detect which language and script the customer wrote in and reply in the EXACT same one:
 - English — reply in English.
 - Sinhala script (අ, ක, ම …) — reply in Sinhala script.
@@ -72,7 +94,9 @@ function buildSystemInstruction(input: GenerateReplyInput): string {
   parts.push(LANGUAGE_RULES)
   parts.push(ACCURACY_RULES)
   parts.push(INJECTION_RULES)
-  parts.push(`Detected script of the latest message: ${detectScriptHint(input.message)} (a hint — trust the message itself).`)
+  parts.push(
+    `Detected language of the latest message: ${detectLanguageHint(input.message)}. Reply in THIS exact language/script. If it is "singlish", you MUST reply in romanized Sinhala (Latin letters) — do NOT switch to Sinhala script. (This is a hint; if the message itself is clearly another language, follow the message.)`,
+  )
   if (input.knowledge?.trim()) {
     parts.push(`--- KNOWLEDGE BASE START ---\n${input.knowledge.trim()}\n--- KNOWLEDGE BASE END ---`)
   } else {

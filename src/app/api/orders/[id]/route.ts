@@ -1,11 +1,13 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { supabaseAdmin } from '@/lib/automations/admin-client'
+import { engineSendText } from '@/lib/automations/meta-send'
 
 // Toggle the admin "confirmed" checkbox on an order. The orders table is
 // read-only under RLS (writes are server-driven), so we verify ownership
 // against the caller's account and then write with the service-role
-// client.
+// client. Confirming a bank-transfer order that's awaiting verification
+// also marks it paid (SUCCESS) and notifies the customer on WhatsApp.
 
 export async function PATCH(
   request: Request,
@@ -37,22 +39,48 @@ export async function PATCH(
   // Ownership: the order must belong to the caller's account.
   const { data: order } = await admin
     .from('orders')
-    .select('id, account_id')
+    .select('*')
     .eq('id', id)
     .maybeSingle()
   if (!order || order.account_id !== accountId) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
+  const update: Record<string, unknown> = {
+    confirmed_at: body.confirmed ? new Date().toISOString() : null,
+    updated_at: new Date().toISOString(),
+  }
+  // Verifying a bank-transfer slip = accepting payment → mark it paid.
+  const verifiedBankTransfer =
+    body.confirmed && order.status === 'AWAITING_VERIFICATION'
+  if (verifiedBankTransfer) update.status = 'SUCCESS'
+
   const { data, error } = await admin
     .from('orders')
-    .update({
-      confirmed_at: body.confirmed ? new Date().toISOString() : null,
-      updated_at: new Date().toISOString(),
-    })
+    .update(update)
     .eq('id', id)
     .select('*')
     .single()
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Tell the customer their bank transfer was confirmed. Best-effort —
+  // a Meta failure shouldn't fail the dashboard action.
+  if (verifiedBankTransfer && order.conversation_id && order.contact_id) {
+    const orderNo = order.order_number ? `#${order.order_number}` : ''
+    try {
+      await engineSendText({
+        accountId,
+        userId: user.id,
+        conversationId: order.conversation_id,
+        contactId: order.contact_id,
+        text: `✅ *Payment confirmed* for Order ${orderNo}!\n\nThank you 🙏 We’re preparing your order now and will keep you posted. 📦`,
+        senderType: 'agent',
+        senderId: user.id,
+      })
+    } catch (err) {
+      console.error('[orders] confirmation message failed:', err)
+    }
+  }
+
   return NextResponse.json({ order: data })
 }

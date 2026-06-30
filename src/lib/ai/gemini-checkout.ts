@@ -10,7 +10,7 @@
 // adds tools + a checkout persona.
 // ------------------------------------------------------------
 
-import { detectScriptHint } from './gemini'
+import { detectLanguageHint } from './gemini'
 
 const DEFAULT_MODEL = 'gemini-2.5-flash'
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models'
@@ -121,7 +121,7 @@ function buildSystemInstruction(input: CheckoutInput): string {
 
   const parts: string[] = [
     `You are the WhatsApp assistant for ${biz}. You do TWO things: (a) answer customers' questions about the business using the BUSINESS INFORMATION below, and (b) take product orders, collect delivery details, and trigger an invoice. Be warm and helpful.`,
-    `LANGUAGE: Detect whether the customer wrote in English, Sinhala script, or Singlish (Sinhala romanized in Latin letters), and reply in the EXACT same one. Never mix languages. Match their tone. Detected script of the latest message: ${detectScriptHint(input.message)} (a hint — trust the message itself).`,
+    `LANGUAGE: Reply in the EXACT language/script the customer used — English → English, Sinhala script → Sinhala script, Singlish (romanized Sinhala in Latin letters) → Singlish. NEVER convert Singlish into Sinhala script, and never mix languages in one reply. Match their tone. Detected language of the latest message: ${detectLanguageHint(input.message)} (a hint — if the message itself is clearly another language, follow the message).`,
     `FORMATTING: Make replies easy to scan on WhatsApp. Use short bullet lists (•) or numbered steps, line breaks between ideas, *bold* (single asterisks) for key things like prices, and a few relevant emojis (🛒 📦 💳 📍 ✅). Keep it friendly and concise — never a long wall of plain text.`,
   ]
 

@@ -34,10 +34,14 @@ export interface CheckoutGatewayInput {
   phone: string
   /** The inbound message text. */
   messageText: string
+  /** An inbound media attachment, if any (used to receive bank slips). */
+  media?: { url: string; type: string } | null
   phoneNumberId: string
   accessToken: string
   /** Public origin for building the payment link, e.g. https://x.ngrok.app */
   baseUrl: string
+  /** Bank account details to offer for transfers (Settings → AI Assistant). */
+  bankDetails?: string | null
 }
 
 export async function runCheckoutGateway(
@@ -45,13 +49,10 @@ export async function runCheckoutGateway(
 ): Promise<{ consumed: boolean }> {
   try {
     const db = supabaseAdmin()
-    const text = input.messageText?.trim()
-    if (!text) return { consumed: false }
-
-    // Per-contact throttle — every turn is a Gemini call. Over the limit
-    // we bow out and let normal processing handle the message.
-    const rl = checkRateLimit(`ai_checkout:${input.accountId}:${input.contactId}`, RATE_LIMITS.aiReply)
-    if (!rl.success) return { consumed: false }
+    const text = input.messageText?.trim() ?? ''
+    const isImage = !!input.media && input.media.type === 'image'
+    // Nothing actionable (no text and no image) → let normal processing run.
+    if (!text && !isImage) return { consumed: false }
 
     // Current checkout state for this conversation.
     const { data: conv } = await db
@@ -64,27 +65,58 @@ export async function runCheckoutGateway(
     if (state === 'WAITING_FOR_PAYMENT') {
       const { data: pending } = await db
         .from('orders')
-        .select('id, expires_at')
+        .select('id, order_number, expires_at')
         .eq('conversation_id', input.conversationId)
         .eq('status', 'PENDING_PAYMENT')
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle()
 
-      const expired =
-        pending?.expires_at != null && new Date(pending.expires_at).getTime() < Date.now()
-      const wantsCancel = /\b(cancel|stop|reset|new order|restart)\b/i.test(text)
-
-      // A live order is still awaiting payment and the customer isn't
-      // cancelling → don't stack a new order on top. Nudge them to pay or
-      // cancel (rather than going silent, which looks like the bot died).
-      if (pending && !expired && !wantsCancel) {
-        const payUrl = `${input.baseUrl.replace(/\/$/, '')}/api/payments/pay?orderId=${pending.id}`
+      // Bank-transfer slip: an image while an order awaits payment is the
+      // customer's proof of bank transfer. Attach it and move the order to
+      // verification — an admin confirms it on the Orders dashboard.
+      if (pending && isImage && input.media) {
+        await db
+          .from('orders')
+          .update({
+            status: 'AWAITING_VERIFICATION',
+            payment_method: 'bank_transfer',
+            slip_url: input.media.url,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', pending.id)
+        await db
+          .from('conversations')
+          .update({ checkout_state: 'COMPLETED', updated_at: new Date().toISOString() })
+          .eq('id', input.conversationId)
+        const orderNo = pending.order_number ? `#${pending.order_number}` : ''
         await sendAndLog(
           db,
           input,
-          `You still have an order waiting for payment 🧾.\nTap “Pay Now” above to complete it, or reply “cancel” to start a new order.\n\nPay here: ${payUrl}`,
+          `✅ Thanks! We’ve received your payment slip for *Order ${orderNo}*.\n\n• Our team will verify it shortly 🔎\n• You’ll get a confirmation here once it’s approved 🙏`,
         )
+        return { consumed: true }
+      }
+
+      const expired =
+        pending?.expires_at != null && new Date(pending.expires_at).getTime() < Date.now()
+      const wantsCancel = !!text && /\b(cancel|stop|reset|new order|restart)\b/i.test(text)
+
+      // A live order is still awaiting payment and the customer isn't
+      // cancelling → don't stack a new order on top. Nudge them with both
+      // payment options (rather than going silent).
+      if (pending && !expired && !wantsCancel) {
+        const payUrl = `${input.baseUrl.replace(/\/$/, '')}/api/payments/pay?orderId=${pending.id}`
+        const lines = [
+          'You still have an order waiting for payment 🧾. You can:',
+          '',
+          `• 💳 Pay by card — tap *Pay Now* above, or open: ${payUrl}`,
+        ]
+        if (input.bankDetails?.trim()) {
+          lines.push('• 🏦 Pay by bank transfer, then send a *photo of your slip* here 📸')
+        }
+        lines.push('• Reply *cancel* to start a new order')
+        await sendAndLog(db, input, lines.join('\n'))
         return { consumed: true }
       }
 
@@ -105,12 +137,21 @@ export async function runCheckoutGateway(
         await sendAndLog(
           db,
           input,
-          'No problem — I’ve cancelled that order. What would you like to order?',
+          'No problem — I’ve cancelled that order. What would you like to order? 🙂',
         )
         return { consumed: true }
       }
       // Expired / stranded → fall through to a fresh AI turn below.
     }
+
+    // An image outside the payment flow (no live order to attach it to)
+    // and no text → the text-only assistant can't act on it.
+    if (isImage && !text) return { consumed: false }
+
+    // Per-contact throttle — every AI turn is a Gemini call. Over the limit
+    // we bow out and let normal processing handle the message.
+    const rl = checkRateLimit(`ai_checkout:${input.accountId}:${input.contactId}`, RATE_LIMITS.aiReply)
+    if (!rl.success) return { consumed: false }
 
     // Load the active product catalog (for ordering) and the knowledge
     // base (for answering general business questions). With neither, the
@@ -256,7 +297,13 @@ export async function runCheckoutGateway(
     if (customerName) lines.push(`👤 *Name:* ${customerName}`)
     if (deliveryAddress) lines.push(`📍 *Deliver to:* ${deliveryAddress}`)
     lines.push('', `💰 *Total:* ${match.currency} ${amount.toLocaleString()}`)
-    lines.push('', '👇 Tap *Pay Now* below to pay securely.')
+    lines.push('', '*How would you like to pay?*')
+    lines.push('• 💳 *Card* — tap *Pay Now* below')
+    if (input.bankDetails?.trim()) {
+      lines.push('• 🏦 *Bank transfer:*')
+      lines.push(input.bankDetails.trim())
+      lines.push('…then send a *photo of your slip* here and we’ll verify it 📸')
+    }
     const bodyText = lines.join('\n')
 
     try {

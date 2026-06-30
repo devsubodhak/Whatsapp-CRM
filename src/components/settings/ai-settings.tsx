@@ -15,9 +15,11 @@ import { Loader2, Sparkles } from 'lucide-react';
 
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/use-auth';
+import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
 import { SettingsPanelHead } from './settings-panel-head';
 import { KnowledgeBasesSettings } from './knowledge-bases-settings';
 
@@ -29,6 +31,8 @@ export function AiSettings() {
   const [hasConfig, setHasConfig] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [bankDetails, setBankDetails] = useState('');
+  const [savingBank, setSavingBank] = useState(false);
 
   const load = useCallback(async () => {
     if (!accountId) {
@@ -37,13 +41,36 @@ export function AiSettings() {
     }
     const { data } = await supabase
       .from('whatsapp_config')
-      .select('ai_checkout_enabled')
+      .select('ai_checkout_enabled, bank_transfer_details')
       .eq('account_id', accountId)
       .maybeSingle();
     setHasConfig(!!data);
     setEnabled(Boolean((data as { ai_checkout_enabled?: boolean } | null)?.ai_checkout_enabled));
+    setBankDetails(
+      (data as { bank_transfer_details?: string | null } | null)?.bank_transfer_details ?? '',
+    );
     setLoading(false);
   }, [accountId, supabase]);
+
+  async function saveBankDetails() {
+    if (!accountId) return;
+    setSavingBank(true);
+    try {
+      const { error } = await supabase
+        .from('whatsapp_config')
+        .update({ bank_transfer_details: bankDetails.trim() || null })
+        .eq('account_id', accountId);
+      if (error) {
+        toast.error(error.message || 'Failed to save');
+        return;
+      }
+      toast.success('Bank transfer details saved');
+    } catch {
+      toast.error('Could not reach the server');
+    } finally {
+      setSavingBank(false);
+    }
+  }
 
   useEffect(() => {
     void load();
@@ -121,6 +148,45 @@ export function AiSettings() {
           )}
         </CardContent>
       </Card>
+
+      {hasConfig && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-foreground">Bank transfer details</CardTitle>
+            <CardDescription className="text-muted-foreground">
+              Shown to customers as a payment option alongside the card link. They
+              can transfer to this account and send a photo of their slip in chat —
+              it appears on the <strong className="text-foreground">Orders</strong>{' '}
+              page for you to verify. Leave blank to offer card payment only.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Label htmlFor="bank-details" className="sr-only">
+              Bank transfer details
+            </Label>
+            <Textarea
+              id="bank-details"
+              value={bankDetails}
+              onChange={(e) => setBankDetails(e.target.value)}
+              disabled={!canEditSettings}
+              placeholder={'Bank: Commercial Bank\nAccount name: YANTECH LANKA (PVT) LTD\nAccount no: 1234567890\nBranch: Matale'}
+              className="max-h-48 min-h-28 font-mono text-xs"
+            />
+            <div className="flex justify-end">
+              <Button onClick={saveBankDetails} disabled={!canEditSettings || savingBank}>
+                {savingBank ? (
+                  <>
+                    <Loader2 className="size-4 animate-spin" />
+                    Saving…
+                  </>
+                ) : (
+                  'Save bank details'
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Knowledge base manager — what the assistant answers from. */}
       <KnowledgeBasesSettings />
